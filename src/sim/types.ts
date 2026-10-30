@@ -115,6 +115,14 @@ export interface MoveDef {
   resetAir?: boolean;
   /** Ruch specjalny tylko dla jednego czołgu (id czołgu). */
   owner?: string;
+  /**
+   * Przewaga klatkowa po trafieniu / bloku (klatki, + = atakujący pierwszy). Czas ogłuszenia
+   * obrońcy liczony jest z wybrzmienia atakującego, więc przewaga jest dokładnie taka, jak tu.
+   */
+  onHit?: number;
+  onBlock?: number;
+  /** Strzał z armaty – wymaga przeładowania (rzadki). */
+  cannon?: boolean;
   /** Trafienie przyciąga przeciwnika przed atakującego (harpun). */
   pull?: boolean;
   /** Zasięg fali uderzeniowej poza stykiem kadłubów (m). */
@@ -231,6 +239,15 @@ export interface FighterState {
   idleFrames: number;
   bounces: number;
   chainBuf: number;
+  /** Bufor przycisków (bitmaska) i jego ważność w klatkach. */
+  bufBtn: number;
+  bufTimer: number;
+  /** Pozostałe wybrzmienie po kontakcie ciosu (klatki) – podstawa przewagi klatkowej. */
+  contactRecover: number;
+  /** Przeładowanie działa (klatki). */
+  reload: number;
+  /** Ile ciosów z rzędu zostało zablokowanych (rosnące odepchnięcie). */
+  blockStreak: number;
   bodyPitch: number;
   bodyPitchVel: number;
   planted: number;

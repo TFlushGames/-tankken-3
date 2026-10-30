@@ -15,6 +15,18 @@ Miejsca, w których specyfikacja zostawiała wybór, i co wybrano.
 - **Przechyły**: ataki mają mocniejsze uniesienie/opuszczenie przodu kadłuba (pancerny zrzut nurkuje nosem ~28°). Pochylenie w locie i salto po wyrzucie liczy renderer z prędkości i stanu – nie wpływa na symulację.
 - **Lufa**: oś elewacji (czopy) jest z przodu wieży, a lufa wysuwa się teleskopowo z kołyski przymocowanej do jarzma – w symulacji i w modelu, więc lufa nigdy nie odstaje od wieży.
 
+## Wersja 6: system walki bez spamu
+- **Bufor wejść** (8 klatek): przycisk wciśnięty w trakcie ciosu, zatrzymania przy trafieniu, lądowania czy bloku wykonuje się w pierwszej możliwej klatce.
+- **Przewaga klatkowa z danych**: po kontakcie atakujący ma stałe wybrzmienie R (zależne od bezwładności), a ogłuszenie obrońcy = R + przewaga z tabeli `FRAME_ADVANTAGE` w `moves.ts`. Proste ciosy ~neutralne, końcówki ciągów i specjalne −10…−20 na bloku (karalne).
+- Ciągi kombo kontynuują się tylko po kontakcie (trafienie/blok); pudło = pełne wybrzmienie.
+- Kolejne zablokowane ciosy odpychają coraz mocniej (atakującego też) – spam wypycha z zasięgu.
+- Ogłuszenie maleje w długim kombo (bez aktywnych „przerywaczy”).
+- Armata tylko u MAMMOTHA (Big Bertha, ~30 klatek przygotowania, wolny pocisk) i w wybiciu wystrzałem; przeładowanie 7 s. THUNDER i COBRA mają zamiast tego ciosy wręcz (Thunder Rush, Lance). Strzał w locie usunięty.
+- Akrobatyka w podstawowym zestawie: HK = salto w tył (gąsienice trafiają), F+HK = skok o lufie, B+HK = tornado całym kadłubem, F+HP = cios z góry, LK = „stójka na tylnych kołach”.
+- Rozmiary wyrównane (lufa MAMMOTHA 4,1 m zamiast 5,5 m).
+- Rozpychanie bez teleportów (limit korekty na klatkę, ściana oddaje nadmiar), harpun zawsze przyciąga po stałym torze.
+- Renderer: zgniatanie/rozciąganie i przechył przy zamachu (kreskówkowa waga).
+
 ## Wersja 5: ataki specjalne
 - Każdy czołg ma 3 ataki specjalne (`owner` w `moves.ts`) wykonywane sekwencją kierunków + przycisk. Każdy kierunek w sekwencji musi być osobnym wciśnięciem (trzymanie „dół” + HK to zwykły cios, „dół, dół” + HK – trzęsienie ziemi).
 - Pociski (`/src/data/projectiles.ts`) są w stanie symulacji (deterministyczne, z id do interpolacji w rendererze). Zderzenie pocisków liczone po najmniejszej odległości w klatce (szybki railgun nie „przeskoczy” innego pocisku).

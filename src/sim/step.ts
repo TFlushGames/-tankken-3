@@ -2,7 +2,7 @@
 // Wyłącznie arytmetyka całkowita, bez DOM, bez three.js, bez Math.random i czasu rzeczywistego.
 import {
   ARENA_RADIUS, DASH_BACK_SCALE, DASH_CANCEL, DASH_PROFILE, DOUBLE_TAP, EV_BLAST, EV_DASH, EV_FIRE, EV_PLANT,
-  SHOT_RANGE, ST_DASH, EV_BLOCK, EV_CLASH, EV_HOOK, EV_PROJ_END, EV_SPAWN, EV_TELEPORT, EV_FIGHT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_ROUND, EV_SHOT, EV_TECH,
+  SHOT_RANGE, ST_DASH, ST_PULLED, INPUT_BUFFER, CANNON_RELOAD, PULL_FRAMES, EV_BLOCK, EV_CLASH, EV_HOOK, EV_PROJ_END, EV_SPAWN, EV_TELEPORT, EV_FIGHT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_ROUND, EV_SHOT, EV_TECH,
   EV_THROW, EV_TIMEUP, EV_WALL, EV_WHOOSH, FIGHT_CALL_FRAME, GETUP_FRAMES, HIST_LEN, INTRO_FRAMES,
   KNOCKDOWN_FRAMES, KO_FRAMES, PH_FIGHT, PH_INTRO, PH_KO, PH_MATCH_END, RUN_MAX, SIDESTEP_INVULN,
   SIDESTEP_PROFILE, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_BLOCKSTUN, ST_CROUCH, ST_GETUP, ST_HITSTUN,
@@ -94,6 +94,11 @@ export function createFighter(tank: number, side: number): FighterState {
     idleFrames: 0,
     bounces: 0,
     chainBuf: 0,
+    bufBtn: 0,
+    bufTimer: 0,
+    contactRecover: 0,
+    reload: 0,
+    blockStreak: 0,
     bodyPitch: 0,
     bodyPitchVel: 0,
     planted: 0,
@@ -284,6 +289,7 @@ function findMove(f: FighterState, o: FighterState, pressed: number, input: numb
     if (m.def.chainOnly || !m.allowed) continue;
     if (!(pressed & BUTTON_BITS[m.def.input.button])) continue;
     if (m.def.input.withRun && !(input & IN_RUN)) continue;
+    if (m.def.cannon && f.reload > 0) continue;
     if (!m.def.stance.includes(stance)) continue;
     // Rzut tylko z bliska – w przeciwnym razie zwykłe dźgnięcie.
     if (m.index === THROW_MOVE && frontGap(f, o) > THROW_RANGE + 400) continue;
@@ -308,6 +314,10 @@ function startMove(s: GameState, i: number, m: CompiledMove): void {
   setState(f, ST_ATTACK);
   f.chainBuf = 0;
   f.chainTimer = 0;
+  f.bufBtn = 0;
+  f.bufTimer = 0;
+  f.contactRecover = 0;
+  if (m.def.cannon) f.reload = CANNON_RELOAD;
   f.move = m.index;
   f.moveKey = 0;
   f.keyFrame = 0;
@@ -332,17 +342,12 @@ function startMove(s: GameState, i: number, m: CompiledMove): void {
 function tryChain(s: GameState, i: number, pressed: number, rel: number): void {
   const f = s.fighters[i]!;
   const m = tankOf(f).moves[f.move]!;
-  if (!m.chains.length) return;
-  if (pressed) {
-    f.chainBuf = pressed;
-    f.chainTimer = 14;
-  } else if (f.chainTimer > 0 && --f.chainTimer === 0) f.chainBuf = 0;
-  if (!f.chainBuf || f.moveKey < m.cancelKey) return;
+  void pressed;
+  // Kontynuacja tylko po kontakcie (trafienie albo blok) – pudło trzeba „odpokutować”.
+  if (!m.chains.length || !f.moveConnected || !f.bufBtn || f.moveKey < m.cancelKey) return;
   for (const c of m.chains) {
-    if (!(f.chainBuf & c.bit) || c.to < 0) continue;
+    if (!(f.bufBtn & c.bit) || c.to < 0) continue;
     if (c.dir !== null && !dirMatches(rel, c.dir, false)) continue;
-    f.chainBuf = 0;
-    f.chainTimer = 0;
     startMove(s, i, tankOf(f).moves[c.to]!);
     return;
   }
@@ -540,7 +545,11 @@ function advanceMove(s: GameState, i: number, tg: Targets): void {
     }
     return;
   }
-  // Wybrzmienie ciosu: cięższy czołg dłużej „dochodzi do siebie”.
+  // Po kontakcie: dokładnie zaplanowane wybrzmienie (przewaga klatkowa). Po pudle – pełne.
+  if (f.contactRecover > 0) {
+    if (--f.contactRecover === 0) endMove(f);
+    return;
+  }
   if (f.keyFrame * t.kickScale >= m.def.recoveryPad * 1000) endMove(f);
 }
 
@@ -607,12 +616,18 @@ function updateFighter(s: GameState, i: number, input: number): void {
   const rel = relDirBits(input, f.facingRight === 1);
   const pressed = input & ~f.prevInput & BUTTON_MASK;
   f.stateFrame++;
+  if (f.reload > 0) f.reload--;
+  // Bufor: przycisk wciśnięty, gdy nie można działać, zostaje wykonany w pierwszej możliwej klatce.
+  if (pressed) {
+    f.bufBtn |= pressed;
+    f.bufTimer = INPUT_BUFFER;
+  } else if (f.bufTimer > 0 && --f.bufTimer === 0) f.bufBtn = 0;
   if (f.invuln > 0) f.invuln--;
   if (f.linearInvuln > 0) f.linearInvuln--;
 
   // Ataki mają pierwszeństwo.
   if (canAct(f) || f.state === ST_AIR) {
-    const m = findMove(f, o, pressed, input);
+    const m = findMove(f, o, f.bufBtn, input);
     if (m) startMove(s, i, m);
   } else if (f.state === ST_ATTACK && f.move >= 0) {
     tryChain(s, i, pressed, rel);
@@ -768,6 +783,21 @@ function updateFighter(s: GameState, i: number, input: number): void {
     case ST_THROWING:
       updateThrowing(s, i);
       break;
+    case ST_PULLED: {
+      // Harpun: lot przed atakującego po prostej z lekkim łukiem, potem ogłuszenie.
+      const t2 = Math.min(f.stateFrame, PULL_FRAMES);
+      f.x = f.throwSX + Math.trunc(((f.throwEX - f.throwSX) * t2) / PULL_FRAMES);
+      f.z = f.throwSZ + Math.trunc(((f.throwEZ - f.throwSZ) * t2) / PULL_FRAMES);
+      f.y = Math.trunc((4 * 900 * t2 * (PULL_FRAMES - t2)) / (PULL_FRAMES * PULL_FRAMES));
+      f.vx = 0;
+      f.vz = 0;
+      f.vy = 0;
+      if (f.stateFrame >= PULL_FRAMES) {
+        f.y = 0;
+        setState(f, ST_HITSTUN);
+      }
+      break;
+    }
     case ST_THROWN:
       updateThrown(s, i, pressed);
       break;
@@ -1000,7 +1030,7 @@ function hitTest(s: GameState, i: number, m: CompiledMove): Point3 | null {
   const d = s.fighters[1 - i]!;
   const at = tankOf(a);
   const dt = tankOf(d);
-  if (d.invuln > 0 || d.state === ST_KO || d.state === ST_THROWN || d.state === ST_KNOCKDOWN || d.state === ST_GETUP) {
+  if (d.invuln > 0 || d.state === ST_KO || d.state === ST_THROWN || d.state === ST_PULLED || d.state === ST_KNOCKDOWN || d.state === ST_GETUP) {
     return null;
   }
   if (m.def.kind === 'linear' && d.linearInvuln > 0) return null;
@@ -1097,12 +1127,20 @@ function resolveHit(s: GameState, h: PendingHit): void {
     a.moveConnected = 1;
   }
   const multi = h.proj || a.hitsDone < m.maxHits;
+  // Zwykły cios (nie akrobacja ani pocisk): po kontakcie atakujący ma ściśle zaplanowane
+  // wybrzmienie R, a ogłuszenie obrońcy = R + przewaga z danych ruchu.
+  const strike = !h.proj && !multi && !m.keys.some((k) => k.plant || k.bodyPitch !== null || k.untilLanding);
+  const R = strike ? Math.max(8, Math.trunc(((m.def.recoveryPad + 6) * 1000) / at.kickScale)) : 0;
   if (!multi) {
     // Trafienie wytraca pęd – lufa się odbija.
     a.turretVel = -Math.trunc(a.turretVel / 3);
     a.pitchVel = -Math.trunc(a.pitchVel / 3);
     a.extVel = -Math.trunc(a.extVel / 2);
-    if (a.move >= 0 && m.keys[a.moveKey]?.active && !m.keys[a.moveKey]!.untilLanding) {
+    if (strike) {
+      a.moveKey = m.keys.length + 1;
+      a.keyFrame = 0;
+      a.contactRecover = R;
+    } else if (a.move >= 0 && m.keys[a.moveKey]?.active && !m.keys[a.moveKey]!.untilLanding) {
       a.moveKey = m.keys.length;
       a.keyFrame = 0;
     }
@@ -1111,11 +1149,17 @@ function resolveHit(s: GameState, h: PendingHit): void {
 
   if (blockable(m.def.level, d)) {
     applyDamage(s, 1 - i, Math.trunc((m.damage * 15) / 100));
+    // Kolejne zablokowane ciosy odpychają coraz mocniej – spam wypycha atakującego poza zasięg.
+    d.blockStreak = d.state === ST_BLOCKSTUN ? d.blockStreak + 1 : 1;
     setState(d, ST_BLOCKSTUN);
-    d.stun = m.def.blockstun;
-    const push = Math.trunc((m.knockback * massFactor) / 2000) + 20;
+    d.stun = strike ? Math.max(1, R + (m.def.onBlock ?? -2)) : m.def.blockstun;
+    const push = Math.trunc(((Math.trunc((m.knockback * massFactor) / 2000) + 30) * (10 + 4 * (d.blockStreak - 1))) / 10);
     const [along, perp] = axisVel(d, aim);
     setAxisVel(d, aim, Math.max(along, push), perp);
+    if (strike) {
+      const [, ap] = axisVel(a, aim);
+      setAxisVel(a, aim, -Math.trunc((push * 35) / 100), ap);
+    }
     s.hitstop = Math.max(s.hitstop, Math.max(3, weightedHitstop(m.def.hitstop, at) - 3));
     d.bodyPitchVel = clamp(Math.trunc(push * 3), 80, dt.flipMaxVel >> 2);
     emit(s, EV_BLOCK, i, h.point, m.damage);
@@ -1150,19 +1194,27 @@ function resolveHit(s: GameState, h: PendingHit): void {
     d.y = 1;
   } else {
     setState(d, ST_HITSTUN);
-    d.stun = m.def.hitstun;
+    // Malejące ogłuszenie w długim kombo – kombo samo się kończy, bez „przerywaczy”.
+    const decay = Math.min(10, 2 * (d.combo - 1));
+    d.stun = Math.max(6, (strike ? R + (m.def.onHit ?? 6) : m.def.hitstun) - decay);
   }
+  d.blockStreak = 0;
   d.crouching = 0;
   d.planted = 0;
   const [, perp] = axisVel(d, aim);
   setAxisVel(d, aim, kb, perp);
   d.suspVel += Math.trunc(kb / 2);
   if (m.def.pull) {
-    // Harpun: przeciwnik leci przed atakującego (ok. 10 klatek, w powietrzu – bez tarcia).
-    const gap = isqrt((d.x - a.x) * (d.x - a.x) + (d.z - a.z) * (d.z - a.z)) - at.halfLen - dt.halfLen - 400;
-    setAxisVel(d, aim, -Math.max(0, Math.trunc(gap / 10)), 0);
-    d.vy = Math.max(d.vy, 150);
-    d.y = Math.max(d.y, 1);
+    // Harpun: przeciwnik jest zawsze przyciągany przed atakującego (stały tor), potem ogłuszony.
+    const front = at.halfLen + dt.halfLen + 500;
+    d.throwSX = d.x;
+    d.throwSZ = d.z;
+    d.throwEX = a.x + trigMul(front, icos(aim));
+    d.throwEZ = a.z + trigMul(front, isin(aim));
+    setState(d, ST_PULLED);
+    d.stun = 34;
+    d.vx = 0;
+    d.vz = 0;
   }
   // Amortyzacja: trafiony czołg odrywa się od ziemi i odchyla do tyłu (przód w górę).
   if (d.state === ST_HITSTUN) {
@@ -1260,7 +1312,7 @@ function updateProjectiles(s: GameState): void {
 function integrate(s: GameState, i: number): void {
   const f = s.fighters[i]!;
   const t = tankOf(f);
-  if (f.state === ST_THROWN || f.planted) return;
+  if (f.state === ST_THROWN || f.state === ST_PULLED || f.planted) return;
   f.x += f.vx;
   f.z += f.vz;
   if (f.y > 0 || f.vy > 0) {
@@ -1318,62 +1370,84 @@ function integrate(s: GameState, i: number): void {
   }
 }
 
+/**
+ * Rozpychanie kadłubów. Bez „teleportów”: korekta jest rozłożona na kilka klatek (limit na klatkę),
+ * kierunek wynika z położenia środków, a ściana areny oddaje nadmiar drugiemu czołgowi.
+ * Skaczący wysoko nad kadłubem przeciwnika przelatuje nad nim.
+ */
 function pushApart(s: GameState): void {
   const a = s.fighters[0];
   const b = s.fighters[1];
-  if (a.state === ST_THROWN || b.state === ST_THROWN) return;
+  if (a.state === ST_THROWN || b.state === ST_THROWN || a.state === ST_PULLED || b.state === ST_PULLED) return;
+  if (a.planted || b.planted) return;
   const ta = tankOf(a);
   const tb = tankOf(b);
-  // Wysoko w powietrzu można przeskoczyć nad kadłubem.
   if (a.y > Math.trunc((tb.hullHeight * 7) / 10) || b.y > Math.trunc((ta.hullHeight * 7) / 10)) return;
+  // Wznoszący się czołg (odbicie do skoku) nie jest rozpychany – inaczej nie przeskoczyłby rywala.
+  if ((a.y > 0 && a.vy > 0) || (b.y > 0 && b.vy > 0)) return;
   const dx = b.x - a.x;
   const dz = b.z - a.z;
   const minD = ta.halfLen + tb.halfLen - 200;
   const d2 = dx * dx + dz * dz;
   if (d2 >= minD * minD) return;
-  let d = isqrt(d2);
+  const d = isqrt(d2);
   let nx: number;
   let nz: number;
-  if (d < 10) {
-    nx = trigMul(1000, icos(s.camRight));
-    nz = trigMul(1000, isin(s.camRight));
-    d = 1;
+  if (d < 50) {
+    // Środki prawie w jednym miejscu – rozdziel zgodnie ze stronami ekranu.
+    const sgn = a.facingRight ? 1 : -1;
+    nx = sgn * trigMul(1000, icos(s.camRight));
+    nz = sgn * trigMul(1000, isin(s.camRight));
   } else {
     nx = Math.trunc((dx * 1000) / d);
     nz = Math.trunc((dz * 1000) / d);
   }
-  let overlap = minD - d;
-  const total = ta.mass + tb.mass;
-  let ma = Math.trunc((overlap * tb.mass) / total);
-  let mb = overlap - ma;
-  // Lądowanie na przeciwniku: skaczący zsuwa się na stronę, w którą leci (przeskok).
+  const overlap = minD - d;
   const airA = a.y > 0;
   const airB = b.y > 0;
+  let ma: number;
+  let mb: number;
   if (airA !== airB) {
-    const j = airA ? a : b;
-    const vn = Math.trunc((j.vx * nx + j.vz * nz) / 1000) * (airA ? 1 : -1);
-    if (vn > 0 && (d < Math.trunc((minD * 3) / 4) || j.state === ST_DASH)) {
-      // Leci „przez” przeciwnika – przerzuć na drugą stronę.
-      overlap = minD + d;
-      if (airA) {
-        ma = -overlap;
-        mb = 0;
-      } else {
-        mb = -overlap;
-        ma = 0;
-      }
-    } else if (airA) {
-      ma = overlap;
-      mb = 0;
-    } else {
-      mb = overlap;
-      ma = 0;
-    }
+    // Lądujący zsuwa się z przeciwnika na swoją stronę.
+    ma = airA ? overlap : 0;
+    mb = airA ? 0 : overlap;
+  } else {
+    const total = ta.mass + tb.mass;
+    ma = Math.trunc((overlap * tb.mass) / total);
+    mb = overlap - ma;
   }
+  const CAP = 260;
+  ma = Math.min(ma, CAP);
+  mb = Math.min(mb, CAP);
   a.x -= Math.trunc((nx * ma) / 1000);
   a.z -= Math.trunc((nz * ma) / 1000);
   b.x += Math.trunc((nx * mb) / 1000);
   b.z += Math.trunc((nz * mb) / 1000);
+  // Prędkości „w siebie” są wygaszane, żeby kadłuby nie drgały.
+  // (W powietrzu pęd zostaje – inaczej nie dałoby się przeskoczyć przeciwnika.)
+  const va = Math.trunc((a.vx * nx + a.vz * nz) / 1000);
+  if (va > 0 && !airA) {
+    a.vx -= Math.trunc((va * nx) / 1000);
+    a.vz -= Math.trunc((va * nz) / 1000);
+  }
+  const vb = Math.trunc((b.vx * nx + b.vz * nz) / 1000);
+  if (vb < 0 && !airB) {
+    b.vx -= Math.trunc((vb * nx) / 1000);
+    b.vz -= Math.trunc((vb * nz) / 1000);
+  }
+  // Ściana: czołg dociśnięty do ściany nie wchodzi w nią – nadmiar przejmuje przeciwnik.
+  const wallFix = (f: FighterState, t: TankParams, other: FighterState, sign: number): void => {
+    const lim = ARENA_RADIUS - t.halfLen;
+    const r = isqrt(f.x * f.x + f.z * f.z);
+    if (r <= lim) return;
+    const excess = r - lim;
+    f.x = Math.trunc((f.x * lim) / r);
+    f.z = Math.trunc((f.z * lim) / r);
+    other.x += Math.trunc((sign * nx * excess) / 1000);
+    other.z += Math.trunc((sign * nz * excess) / 1000);
+  };
+  wallFix(a, ta, b, 1);
+  wallFix(b, tb, a, -1);
 }
 
 function updateCamera(s: GameState): void {
@@ -1489,7 +1563,16 @@ export function step(s: GameState, in1: number, in2: number): GameState {
   if (s.phase === PH_MATCH_END) return s;
   if (s.hitstop > 0) {
     s.hitstop--;
-    for (let i = 0; i < 2; i++) s.fighters[i]!.prevInput = inputs[i]!;
+    // W trakcie zatrzymania przy trafieniu wciśnięcia nie przepadają – trafiają do bufora.
+    for (let i = 0; i < 2; i++) {
+      const f = s.fighters[i]!;
+      const pressed = inputs[i]! & ~f.prevInput & BUTTON_MASK;
+      if (pressed) {
+        f.bufBtn |= pressed;
+        f.bufTimer = INPUT_BUFFER;
+      }
+      f.prevInput = inputs[i]!;
+    }
     return s;
   }
   // Zwolnione tempo K.O.: fizyka co drugą klatkę.

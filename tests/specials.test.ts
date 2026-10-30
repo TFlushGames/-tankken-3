@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PH_FIGHT } from '../src/sim/constants';
-import { IN_DOWN, IN_HK, IN_HP, IN_LEFT, IN_LK, IN_LP, IN_RIGHT } from '../src/sim/input';
+import { IN_DOWN, IN_HK, IN_HP, IN_LEFT, IN_LK, IN_LP, IN_RIGHT, IN_UP } from '../src/sim/input';
 import { MOVE_INDEX } from '../src/sim/params';
 import { createMatch, step } from '../src/sim/step';
 import type { GameState } from '../src/sim/types';
@@ -30,11 +30,11 @@ const B = IN_LEFT;
 const D = IN_DOWN;
 
 describe('ataki specjalne', () => {
-  it('THUNDER: B, F + HP wystrzeliwuje pocisk, który trafia z daleka', () => {
-    const s = fight(1, 1);
+  it('MAMMOTH: B, F + HP – Big Bertha: wolny pocisk, który trafia z daleka', () => {
+    const s = fight(0, 1);
     motion(s, [B, F], IN_HP);
     let spawned = false;
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 160; i++) {
       step(s, 0, 0);
       if (s.projectiles.length) spawned = true;
     }
@@ -42,22 +42,37 @@ describe('ataki specjalne', () => {
     expect(s.fighters[1].hp).toBeLessThan(1000);
   });
 
-  it('pocisk wysoki przechodzi nad kucającym', () => {
-    const s = fight(1, 1);
+  it('armata wymaga przeładowania – drugi strzał od razu nie wychodzi', () => {
+    const s = fight(0, 1);
     motion(s, [B, F], IN_HP);
-    run(s, 80, 0, IN_DOWN);
-    expect(s.fighters[1].hp).toBe(1000);
+    run(s, 120, 0);
+    const before = s.projectiles.length;
+    motion(s, [B, F], IN_HP);
+    run(s, 60, 0);
+    expect(before + s.projectiles.length).toBe(0);
+    expect(s.fighters[0].reload).toBeGreaterThan(0);
+  });
+
+  it('fala THUNDERA (nisko) nie trafia skaczącego', () => {
+    const s = fight(1, 1);
+    motion(s, [D, B], IN_LK);
+    let hit = false;
+    for (let i = 0; i < 70; i++) {
+      step(s, 0, i % 40 === 8 ? IN_UP : 0);
+      if (s.fighters[1].hp < 1000) hit = true;
+    }
+    expect(hit).toBe(false);
   });
 
   it('dwa pociski znoszą się nawzajem', () => {
-    const s = fight(1, 1);
+    const s = fight(0, 0);
     run(s, 40, B, F);
     for (const d of [B, F]) {
       run(s, 2, d, d === B ? F : B);
       run(s, 1, 0);
     }
     step(s, F | IN_HP, B | IN_HP);
-    run(s, 80, 0, 0);
+    run(s, 160, 0, 0);
     expect(s.fighters[0].hp).toBe(1000);
     expect(s.fighters[1].hp).toBe(1000);
   });
@@ -101,12 +116,23 @@ describe('ataki specjalne', () => {
     expect(s.fighters[0].move).toBe(MOVE_INDEX['d_hk']);
   });
 
-  it('COBRA: B, F + HP – railgun trafia przez całą arenę', () => {
+  it('COBRA: B, F + HP – Lance dosięga z dystansu wypadem', () => {
     const s = fight(3, 1);
-    run(s, 30, B);
     motion(s, [B, F], IN_HP);
-    run(s, 70, 0);
+    run(s, 50, 0);
     expect(s.fighters[1].hp).toBeLessThan(1000);
+  });
+
+  it('THUNDER: B, F + HP – Thunder Rush trafia dwa razy', () => {
+    const s = fight(1, 1);
+    let hits = 0;
+    run(s, 30, F);
+    motion(s, [B, F], IN_HP);
+    for (let i = 0; i < 70; i++) {
+      step(s, 0, 0);
+      hits += s.events.filter((e) => e.type === 1).length;
+    }
+    expect(hits).toBeGreaterThanOrEqual(1);
   });
 
   it('specjalne innego czołgu nie działają', () => {

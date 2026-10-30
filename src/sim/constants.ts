@@ -17,10 +17,11 @@ export const ST_THROWING = 14;
 export const ST_KO = 15;
 export const ST_WIN = 16;
 export const ST_DASH = 17;
+export const ST_PULLED = 18;
 
 export const STATE_NAMES = [
   'IDLE', 'CROUCH', 'JUMPSQUAT', 'AIR', 'LAND', 'RUN', 'ATTACK', 'BLOCKSTUN', 'HITSTUN',
-  'AIRHIT', 'KNOCKDOWN', 'GETUP', 'SIDESTEP', 'THROWN', 'THROWING', 'KO', 'WIN', 'DASH',
+  'AIRHIT', 'KNOCKDOWN', 'GETUP', 'SIDESTEP', 'THROWN', 'THROWING', 'KO', 'WIN', 'DASH', 'PULLED',
 ];
 
 export const PH_INTRO = 0;
@@ -57,6 +58,12 @@ export const FIGHT_CALL_FRAME = 60;
 export const KO_FRAMES = 210;
 export const RUN_MAX = 1000;
 export const HIST_LEN = 60;
+/** Bufor wejść: przycisk wciśnięty, gdy nie można działać, czeka tyle klatek. */
+export const INPUT_BUFFER = 8;
+/** Przeładowanie działa (klatki) – strzały z armaty są rzadkie. */
+export const CANNON_RELOAD = 420;
+/** Lot przyciąganego harpunem (klatki). */
+export const PULL_FRAMES = 10;
 
 /** Profil prędkości uniku (mm/klatkę), suma = 1500 mm. */
 export const SIDESTEP_PROFILE = [130, 140, 140, 130, 120, 110, 100, 95, 90, 85, 80, 75, 70, 60, 50, 25];

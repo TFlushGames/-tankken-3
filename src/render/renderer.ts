@@ -58,6 +58,9 @@ interface TankView {
   smokeTimer: number;
   markTimer: number;
   tumble: number;
+  squash: number;
+  lean: number;
+  prevY: number;
   trail: SwingTrail;
 }
 
@@ -183,7 +186,7 @@ export class GameRenderer {
       this.scene.add(model.root);
       return {
         model, sway: 0, swayVel: 0, roll: 0, rollVel: 0, prevAlong: 0, prevYaw: 0, prevX: 0, prevZ: 0,
-        flash: 0, destroyed: false, decals: [], smokeTimer: 0, markTimer: 0, tumble: 0,
+        flash: 0, destroyed: false, decals: [], smokeTimer: 0, markTimer: 0, tumble: 0, squash: 0, lean: 0, prevY: 0,
         trail: this.makeTrail(i),
       };
     });
@@ -281,7 +284,8 @@ export class GameRenderer {
         if (defender) {
           defender.flash = 1;
           this.addDecal(defender, p);
-          defender.roll += (Math.random() < 0.5 ? -1 : 1) * 0.06 * power;
+          defender.roll += (Math.random() < 0.5 ? -1 : 1) * 0.12 * power;
+          defender.squash = -0.12 - power * 0.12;
           const df = s.fighters[1 - e.actor]!;
           if (df.hp < 250) this.dropSkirt(defender);
         }
@@ -547,6 +551,21 @@ export class GameRenderer {
     if (b.state === ST_AIR || (b.state === ST_ATTACK && b.y > 0)) tilt = THREE.MathUtils.clamp(b.vy * 0.0009, -0.45, 0.45);
     if (b.state === ST_KNOCKDOWN && b.y <= 0) tilt = -0.12 + Math.sin(this.time * 18) * 0.03 * Math.max(0, 1 - b.stateFrame / 20);
     m.spin.rotation.z = v.tumble + tilt + lerp(a.bodyPitch, b.bodyPitch, t) * DEG;
+
+    // Kreskówkowa „waga”: zgniecenie przy lądowaniu, rozciągnięcie w wyskoku,
+    // przechył na bok przy zamachu wieży (jak boksera przenoszącego ciężar).
+    if (dtc > 0) {
+      if (v.prevY > 0.08 && y <= 0.001) v.squash = Math.min(v.squash, -0.08 - Math.min(0.2, v.prevY * 0.1));
+      v.prevY = y;
+      const stretch = y > 0.05 ? THREE.MathUtils.clamp(b.vy / 2200, -0.1, 0.16) : 0;
+      v.squash += (stretch - v.squash) * (1 - Math.exp(-(v.squash < stretch ? 10 : 7) * dtc));
+      const tp = TANK_PARAMS[b.tank]!;
+      const swing = (b.turretVel / tp.turretMaxVel) * 0.22 + (b.pivotVel / Math.max(1, tp.spinMaxVel)) * 0.35;
+      v.lean += (THREE.MathUtils.clamp(swing, -0.32, 0.32) - v.lean) * (1 - Math.exp(-9 * dtc));
+    }
+    const sq = v.squash;
+    m.spin.scale.set(1 - sq * 0.55, 1 + sq, 1 - sq * 0.55);
+    m.body.rotation.x = v.roll + v.lean;
 
     // Smuga ciosu za końcem lufy.
     m.root.updateMatrixWorld(true);
