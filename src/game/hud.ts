@@ -33,6 +33,8 @@ export class Hud {
   private sub: HTMLElement;
   private debug: HTMLElement;
   private lastBanner = '';
+  /** Co robi Esc po meczu (lokalnie: menu, online: powrót do wyboru czołgu). */
+  escHint = 'menu';
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud', parent);
@@ -106,7 +108,7 @@ export class Hud {
       }
     } else if (s.phase === PH_MATCH_END) {
       banner = `PLAYER ${s.winner + 1} WINS`;
-      sub = `${TANKS[s.fighters[s.winner]!.tank]!.name} • Enter / T – rematch • Esc – menu`;
+      sub = `${TANKS[s.fighters[s.winner]!.tank]!.name} • Enter / T – rematch • Esc – ${this.escHint}`;
     }
     if (banner !== this.lastBanner) {
       this.banner.textContent = banner;

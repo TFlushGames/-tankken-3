@@ -7,9 +7,10 @@ export type NetMsg =
   | { t: 'ping'; ts: number }
   | { t: 'pong'; ts: number }
   | { t: 'hash'; m: number; f: number; h: number }
-  | { t: 'rematch' };
+  | { t: 'rematch' }
+  | { t: 'lobby' };
 
-export const NET_VERSION = 3;
+export const NET_VERSION = 4;
 const MAX_LEN = 4096;
 
 function isInt(v: unknown): v is number {
@@ -52,6 +53,8 @@ export function parseMsg(raw: unknown): NetMsg | null {
       return isInt(m['f']) && isInt(m['h']) && isInt(m['m']) ? { t: 'hash', m: m['m'], f: m['f'], h: m['h'] } : null;
     case 'rematch':
       return { t: 'rematch' };
+    case 'lobby':
+      return { t: 'lobby' };
     default:
       return null;
   }

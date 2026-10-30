@@ -275,6 +275,7 @@ export class App {
   }
 
   private startMatch(): void {
+    this.hud.escHint = 'menu';
     this.state = createMatch(this.pick[0], this.pick[1], 0x5eed + this.seedCounter++, { training: this.training ? 1 : 0 });
     this.prev = snapshot(this.state);
     this.acc = 0;
@@ -475,16 +476,35 @@ export class App {
     }
     const resume = h('button', { class: 'menu-item active' }, 'Resume (Esc)');
     resume.addEventListener('click', () => this.togglePause());
-    const menu = h('button', { class: 'menu-item' }, 'Quit to menu');
-    menu.addEventListener('click', () => {
-      this.togglePause();
-      this.showMenu();
-    });
-    this.pauseMenu = h('div', { class: 'pause' }, h('h2', {}, 'PAUSED'), resume, menu);
+    const items: HTMLElement[] = [resume];
+    if (this.net) {
+      // Online: gra się nie zatrzymuje; wyjście wraca obu graczy do wyboru czołgu.
+      const lobby = h('button', { class: 'menu-item' }, 'Back to tank select');
+      lobby.addEventListener('click', () => {
+        this.togglePause();
+        this.goToLobby(true);
+      });
+      const leave = h('button', { class: 'menu-item' }, 'Leave room');
+      leave.addEventListener('click', () => {
+        this.togglePause();
+        this.showMenu();
+      });
+      items.push(lobby, leave);
+    } else {
+      const menu = h('button', { class: 'menu-item' }, 'Quit to menu');
+      menu.addEventListener('click', () => {
+        this.togglePause();
+        this.showMenu();
+      });
+      items.push(menu);
+    }
+    this.pauseMenu = h('div', { class: 'pause' }, h('h2', {}, this.net ? 'MENU' : 'PAUSED'), ...items);
     this.ui.append(this.pauseMenu);
   }
 
   private fightInput(): void {
+    // Online po meczu: Esc wraca do wyboru czołgu (połączenie zostaje).
+    if (this.net && this.state?.phase === PH_MATCH_END && this.kb.consume('Escape')) return this.goToLobby(true);
     if (this.kb.consume('Escape')) this.togglePause();
     if (this.kb.consume('F1')) this.renderer.showDebug = !this.renderer.showDebug;
     if (this.kb.consume('F2')) this.showNet = !this.showNet;
@@ -508,7 +528,6 @@ export class App {
         if (this.net) this.requestRematch();
         else this.startMatch();
       }
-      if (this.net && this.kb.consume('Escape')) this.showMenu();
     }
   }
 
@@ -812,7 +831,28 @@ export class App {
     this.acc = 0;
     this.renderer.setTanks(tanks[0], tanks[1]);
     this.audio.startEngines(tanks);
+    this.hud.escHint = 'change tank';
     this.setScreen('fight', null);
+  }
+
+  /** Powrót do wyboru czołgu bez zrywania połączenia (opcjonalnie powiadamia przeciwnika). */
+  private goToLobby(notify: boolean): void {
+    const n = this.net;
+    if (!n) return;
+    if (this.pauseMenu) this.togglePause();
+    n.session = null;
+    n.inFight = false;
+    n.myReady = false;
+    n.rematchMe = false;
+    n.rematchOpp = false;
+    if (n.opp) n.opp.ready = false;
+    this.state = null;
+    this.prev = null;
+    this.audio.stopEngines();
+    this.hud.setDebug('');
+    if (notify) n.transport?.send({ t: 'lobby' });
+    this.sendPick();
+    this.showLobby();
   }
 
   private requestRematch(): void {
@@ -865,6 +905,9 @@ export class App {
       case 'rematch':
         net.rematchOpp = true;
         this.checkRematch();
+        break;
+      case 'lobby':
+        if (net.inFight) this.goToLobby(false);
         break;
       default:
         break;
