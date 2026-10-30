@@ -145,6 +145,8 @@ export class AudioEngine {
   updateContinuous(s: GameState): void {
     const ctx = this.ctx;
     if (!ctx) return;
+    // Końcówka walki (mało HP) – perkusja gęstnieje.
+    this.music?.setIntensity(s.fighters.some((f) => f.hp > 0 && f.hp < 300) ? 1 : 0);
     const now = ctx.currentTime;
     for (let i = 0; i < this.engines.length; i++) {
       const e = this.engines[i]!;

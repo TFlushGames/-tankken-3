@@ -108,3 +108,19 @@ Miejsca, w których specyfikacja zostawiała wybór, i co wybrano.
 - Po akcji zwycięzca w pozie spoczynkowej (kamera nisko, czołg w prawej części kadru) i menu:
   Rematch / Character select / Main menu (online: Leave room). Koniec z zapętlonym resetem meczu.
 - Po wygranej rundzie zwycięzca robi krótką pozę (lufa w górę, wieża tańczy), kamera na zwycięzcę.
+
+## Wersja 8 – poprawki walki, menu, wybór czołgu, nowe modele, muzyka
+
+- Tyczka (Barrel Spin) trafiona w trakcie nie wystrzeliwuje już czołgu: puszczenie lufy zawsze
+  przycina prędkość, a więzy tyczki są ograniczone na klatkę. Żonglerka nie sumuje wyrzutu
+  (limit 4,5 m wysokości).
+- Po trafieniu zamach trwa dalej (follow-through z przestrzeleniem) zamiast odbicia lufy i zamrożenia;
+  akrobacje grają do końca. Czas wybrzmienia (przewaga klatkowa) bez zmian.
+- Mniejsze różnice rozmiarów: MAMMOTH krótsza lufa i mniejszy kadłub, WASP nieco większy.
+- Otoczenie w korytarzu kamera→czołg jest wycinane (dithering w shaderze) – drzewa nie zasłaniają walki.
+- Menu: jeden czołg w punkcie złotego podziału, kamera nisko w trawie, dym na horyzoncie, ziarno i sepia.
+- Wybór czołgu w stylu klasycznych bijatyk: kafelki z portretami (render modeli), czołgi spadają na scenę.
+- Nowe modele: wspólna paleta, kamuflaż rzutowany na płyty, ciemniejszy dół (ciężar), setki detali
+  scalonych w kilka siatek na materiał.
+- Muzyka: orkiestra + rock (taiko, smyczki, blacha, chór, gitara z przesterem, pogłos splotowy);
+  menu smętne (fortepian, róg, kotły, daleki werbel). Przy małym HP perkusja gęstnieje.
