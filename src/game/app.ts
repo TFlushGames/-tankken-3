@@ -14,7 +14,7 @@ import { PeerRoom, normalizeCode } from '../net/peer';
 import { LossyTransport, NET_VERSION, type NetMsg, type Transport } from '../net/protocol';
 import { RollbackSession } from '../net/rollback';
 import { Hud } from './hud';
-import { ACTIONS, DEFAULT_BINDINGS, Keyboard, keyLabel, saveBindings, type Action } from './input';
+import { ACTIONS, DEFAULT_BINDINGS, Keyboard, keyLabel, saveBindings, type Action, type Bindings } from './input';
 
 type Screen = 'menu' | 'select' | 'fight' | 'settings' | 'help' | 'online';
 
@@ -385,20 +385,10 @@ export class App {
       ['Double jump (flip)', 'W in the air', '↑ in the air'],
       ['Air dash', 'H + direction', 'Num 5 + direction'],
     ];
-    const label = (id: string, depth = 0): string => {
-      const m = MOVES.find((x) => x.id === id)!;
-      if (m.chainOnly && depth < 4) {
-        const parent = MOVES.find((p) => p.chains?.some((c) => c.to === id));
-        const link = parent?.chains?.find((c) => c.to === id);
-        if (parent && link) return `${label(parent.id, depth + 1)}, ${link.button}`;
-      }
-      const seq = m.input.sequence.map((d) => ({ D: 'down', B: 'back', F: 'forward', U: 'up' } as Record<string, string>)[d] ?? d);
-      const st = m.stance.includes('air') && !m.stance.includes('stand') ? 'in air + ' : '';
-      const run = m.input.withRun ? 'RUN + ' : '';
-      return st + run + [...seq, m.input.button].join(' + ');
-    };
+    const label = (id: string): string => moveLabel(id, 'words');
+    const owners: Record<string, string> = Object.fromEntries(TANKS.map((t) => [t.id, t.name]));
     const moves = MOVES.map((m) =>
-      h('tr', {}, h('td', {}, m.name), h('td', {}, label(m.id)), h('td', {}, m.desc)));
+      h('tr', {}, h('td', {}, m.owner ? `${m.name} (${owners[m.owner]})` : m.name), h('td', {}, label(m.id)), h('td', {}, m.desc)));
     const back = h('button', { class: 'back-btn' }, '← Menu (Esc)');
     back.addEventListener('click', () => this.showMenu());
     const root = h('div', { class: 'screen help' },
@@ -432,15 +422,33 @@ export class App {
     if (!p || !this.state) return;
     const tank = this.state.fighters[0].tank;
     const fd = computeFrameData(tank);
+    // Lista ruchów: kierunki względne (→ = do przeciwnika, gdy stoisz po lewej) i konkretne klawisze gracza 1.
+    const tankId = TANKS[tank]!.id;
+    const row = (id: string): HTMLElement => {
+      const m = MOVES.find((x) => x.id === id)!;
+      return h('tr', {}, h('td', {}, m.name), h('td', { class: 'ml-arrows' }, moveLabel(id, 'arrows')), h('td', { class: 'ml-keys' }, moveLabel(id, 'keys', this.kb.bindings[0])));
+    };
+    const section = (title: string, ids: string[]): HTMLElement[] => [
+      h('div', { class: 'ml-head' }, title),
+      h('table', { class: 'fd ml' }, ...ids.map(row)),
+    ];
+    const specials = MOVES.filter((m) => m.owner === tankId).map((m) => m.id);
+    const moveList = [
+      ...section('SPECIAL MOVES', specials),
+      ...section('COMBO STRINGS (mash)', ['hp3', 'lp3', 'lk3', 'hk2']),
+      ...section('ACROBATICS (hold RUN)', ['vault', 'handstand', 'blastjump', 'dashram', 'air_shot']),
+      h('div', { class: 'fd-mode' }, '→ / ← = toward / away from the opponent (shown for the left side). Tap the directions one after another, then press the button.'),
+    ];
     p.replaceChildren(
       h('div', { class: 'fd-title' }, `TRAINING – ${TANKS[tank]!.name}`),
       h('div', { class: 'fd-mode' }, `Dummy: ${DUMMY_MODES[this.dummy]} (F7)`),
       h('div', { class: 'fd-mode' }, this.paused ? '⏸ PAUSED – F4: next frame' : 'F3: pause • F1: hitboxes'),
+      ...(!this.showFd ? moveList : []),
       ...(this.showFd ? [h('table', { class: 'fd' },
         h('tr', {}, h('th', {}, 'Move'), h('th', {}, 'Start'), h('th', {}, 'Act.'), h('th', {}, 'Rec.'), h('th', {}, 'Dmg'), h('th', {}, 'Type')),
         ...fd.map((d) => h('tr', {}, h('td', {}, d.name), h('td', {}, String(d.startup)), h('td', {}, String(d.active)),
           h('td', {}, String(d.recovery)), h('td', {}, String(d.damage)), h('td', {}, `${d.level}, ${d.kind}`))))] : []),
-      h('div', { class: 'fd-mode' }, 'F6: show/hide frame data'),
+      h('div', { class: 'fd-mode' }, this.showFd ? 'F6: back to the move list' : 'F6: frame data'),
     );
   }
 
@@ -985,4 +993,32 @@ interface OnlineState {
   lostAt: number;
   retryAt: number;
   inFight: boolean;
+}
+
+const ARROWS: Record<string, string> = { D: '↓', B: '←', F: '→', U: '↑' };
+const WORDS: Record<string, string> = { D: 'down', B: 'back', F: 'forward', U: 'up' };
+
+/** Zapis wykonania ruchu: strzałki, słowa albo konkretne klawisze gracza 1 (stojącego po lewej). */
+function moveLabel(id: string, mode: 'arrows' | 'words' | 'keys', b?: Bindings, depth = 0): string {
+  const m = MOVES.find((x) => x.id === id)!;
+  if (m.chainOnly && depth < 4) {
+    // Spośród ruchów prowadzących do tego wybierz „wciskanie tego samego przycisku” od zwykłego ciosu.
+    const score = (p: (typeof MOVES)[number]): number => {
+      const c = p.chains!.find((x) => x.to === id)!;
+      return (p.input.button === c.button ? 4 : 0) + (p.input.sequence.length === 0 ? 2 : 0) + (p.input.withRun ? 0 : 1);
+    };
+    const parent = MOVES.filter((p) => p.chains?.some((c) => c.to === id)).sort((x, y) => score(y) - score(x))[0];
+    const link = parent?.chains?.find((c) => c.to === id);
+    if (parent && link) {
+      const btn = mode === 'keys' && b ? keyLabel(b[link.button]) : link.button;
+      return `${moveLabel(parent.id, mode, b, depth + 1)}, ${btn}`;
+    }
+  }
+  const dirKey: Record<string, string> = b ? { D: keyLabel(b.down), B: keyLabel(b.left), F: keyLabel(b.right), U: keyLabel(b.up) } : {};
+  const seq = m.input.sequence.map((d) => (mode === 'arrows' ? ARROWS[d] : mode === 'words' ? WORDS[d] : dirKey[d]) ?? d);
+  const air = m.stance.includes('air') && !m.stance.includes('stand') ? (mode === 'words' ? 'in air + ' : 'air ') : '';
+  const run = m.input.withRun ? (mode === 'keys' && b ? `${keyLabel(b.RUN)} + ` : 'RUN + ') : '';
+  const btn = mode === 'keys' && b ? keyLabel(b[m.input.button]) : m.input.button;
+  const dirs = seq.length ? (mode === 'words' ? `${seq.join(', ')} + ` : `${seq.join(' ')} + `) : '';
+  return air + run + dirs + btn;
 }

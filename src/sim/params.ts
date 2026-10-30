@@ -1,6 +1,7 @@
 // Kompilacja danych „ludzkich” (/src/data) do jednostek symulacji (mm, setne stopnia, klatki).
 // Liczby zmiennoprzecinkowe pojawiają się WYŁĄCZNIE tutaj i są od razu zaokrąglane.
 import { MOVES } from '../data/moves';
+import { PROJECTILES, type ProjectileDef } from '../data/projectiles';
 import { TANKS } from '../data/tanks';
 import { BUTTON_BITS } from './input';
 import type { MoveDef, TankDef } from './types';
@@ -45,7 +46,10 @@ export interface CompiledKey {
   bodyPitch: number | null;
   hullSpin: number | null;
   plant: boolean;
-  fire: 'shot' | 'blast' | null;
+  fire: 'shot' | 'blast' | 'hook' | null;
+  spawn: number;
+  teleport: number | null;
+  invuln: number;
   recoil: number;
   leap: number | null;
 }
@@ -62,6 +66,10 @@ export interface CompiledMove {
   radius: number;
   /** Indeks pierwszej aktywnej klatki kluczowej – od niej można przejść do następnego ciosu. */
   cancelKey: number;
+  /** Ruch dostępny dla tego czołgu (specjalne mają właściciela). */
+  allowed: boolean;
+  /** Zasięg fali uderzeniowej (mm). */
+  reach: number;
   chains: { bit: number; dir: CompiledChainDir; to: number }[];
 }
 
@@ -107,6 +115,7 @@ export interface TankParams {
   /** Współczynnik impulsów kadłuba w promilach (lżejszy = mocniejsze szarpnięcie). */
   kickScale: number;
   moves: CompiledMove[];
+  projectiles: CompiledProjectile[];
 }
 
 function compileMove(def: MoveDef, index: number, tank: TankDef, kickScale: number): CompiledMove {
@@ -123,7 +132,9 @@ function compileMove(def: MoveDef, index: number, tank: TankDef, kickScale: numb
     maxHits: m.maxHits ?? 1,
     rehit: m.rehit ?? 0,
     radius: mm(m.radius ?? tank.barrelRadius),
-    cancelKey: Math.max(0, m.keys.findIndex((k) => k.active)),
+    cancelKey: Math.max(0, m.keys.findIndex((k) => k.active || k.spawn !== undefined)),
+    allowed: !m.owner || m.owner === tank.id,
+    reach: mm(m.reach ?? 1.4),
     chains: (m.chains ?? []).map((c) => ({ bit: BUTTON_BITS[c.button], dir: c.dir ?? null, to: MOVES.findIndex((x) => x.id === c.to) })),
     keys: m.keys.map((k) => ({
       yaw: k.yaw === undefined ? null : cd(k.yaw),
@@ -144,8 +155,37 @@ function compileMove(def: MoveDef, index: number, tank: TankDef, kickScale: numb
       plant: k.plant ?? false,
       leap: k.leap === undefined ? null : mm(k.leap),
       fire: k.fire ?? null,
+      spawn: k.spawn === undefined ? -1 : PROJECTILES.findIndex((p) => p.id === k.spawn),
+      teleport: k.teleport === undefined ? null : mm(k.teleport),
+      invuln: k.invuln ?? 0,
       recoil: Math.round((mm(perFrame(k.recoil ?? 0)) * kickScale) / 1000),
     })),
+  };
+}
+
+export interface CompiledProjectile {
+  def: ProjectileDef;
+  index: number;
+  speed: number;
+  radius: number;
+  life: number;
+  /** Dane trafienia w formie ruchu – wspólna obsługa z ciosami. */
+  hit: CompiledMove;
+}
+
+function compileProjectile(p: ProjectileDef, index: number, tank: TankDef, kickScale: number): CompiledProjectile {
+  const hitDef: MoveDef = {
+    id: `proj_${p.id}`, name: p.name, desc: '', input: { sequence: [], button: 'HP', window: 1 }, stance: [],
+    level: p.level, kind: 'linear', source: 'shot', damage: p.damage, hitstun: p.hitstun, blockstun: p.blockstun,
+    knockback: p.knockback, knockdown: p.knockdown, hitstop: p.hitstop, recoveryPad: 0, keys: [],
+  };
+  return {
+    def: p,
+    index,
+    speed: mm(perFrame(p.speed)),
+    radius: mm(p.radius),
+    life: p.life,
+    hit: compileMove(hitDef, -1, tank, kickScale),
   };
 }
 
@@ -197,6 +237,7 @@ function compileTank(def: TankDef, index: number): TankParams {
     hullTurn: cd(perFrame(def.hullTurnRate)),
     kickScale,
     moves: MOVES.map((m, i) => compileMove(m, i, def, kickScale)),
+    projectiles: PROJECTILES.map((p, i) => compileProjectile(p, i, def, kickScale)),
   };
 }
 

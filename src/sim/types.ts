@@ -56,8 +56,14 @@ export interface MoveKey {
   plant?: boolean;
   /** Skok naprowadzany: czołg ląduje w tej odległości (m) od przeciwnika (0 = na nim). */
   leap?: number;
-  /** Wystrzał przy wejściu w fazę: pocisk wzdłuż lufy albo wybuch przy wylocie. */
-  fire?: 'shot' | 'blast';
+  /** Wystrzał przy wejściu w fazę: pocisk wzdłuż lufy, wybuch przy wylocie albo harpun. */
+  fire?: 'shot' | 'blast' | 'hook';
+  /** Wystrzelenie pocisku (id z /src/data/projectiles.ts) przy wejściu w fazę. */
+  spawn?: string;
+  /** Teleport: czołg pojawia się za plecami przeciwnika (m za stykiem kadłubów), wysoko w powietrzu. */
+  teleport?: number;
+  /** Nietykalność od wejścia w fazę (klatki). */
+  invuln?: number;
   /** Odrzut wystrzału (m/s, przeciwnie do kierunku lufy, skalowany masą). */
   recoil?: number;
   /** Napęd bez hamowania (domyślnie w fazie aktywnej) – cios przelatuje przez cel. */
@@ -107,6 +113,12 @@ export interface MoveDef {
   chainOnly?: boolean;
   /** Po zakończeniu w powietrzu można znów atakować (np. wybicie wystrzałem). */
   resetAir?: boolean;
+  /** Ruch specjalny tylko dla jednego czołgu (id czołgu). */
+  owner?: string;
+  /** Trafienie przyciąga przeciwnika przed atakującego (harpun). */
+  pull?: boolean;
+  /** Zasięg fali uderzeniowej poza stykiem kadłubów (m). */
+  reach?: number;
 }
 
 /** Czołg zdefiniowany w jednostkach „ludzkich” (m, m/s, stopnie, tony). */
@@ -240,6 +252,19 @@ export interface MatchOptions {
   roundFrames: number;
 }
 
+/** Pocisk w locie (pełnoprawny obiekt symulacji – może trafić, zostać zablokowany, zderzyć się z innym). */
+export interface ProjectileState {
+  id: number;
+  kind: number;
+  owner: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vz: number;
+  life: number;
+}
+
 export interface GameState {
   frame: number;
   seed: number;
@@ -255,4 +280,6 @@ export interface GameState {
   opts: MatchOptions;
   fighters: [FighterState, FighterState];
   events: SimEvent[];
+  projectiles: ProjectileState[];
+  nextProj: number;
 }

@@ -1,6 +1,6 @@
 // Wylicza wynikowe frame data ruchów, uruchamiając symulację „na sucho” (bez przeciwnika w zasięgu).
 import { MOVES } from '../data/moves';
-import { ST_ATTACK, ST_THROWING, THROW_ACTIVE, THROW_RECOVERY, THROW_STARTUP } from './constants';
+import { EV_SPAWN, ST_ATTACK, ST_THROWING, THROW_ACTIVE, THROW_RECOVERY, THROW_STARTUP } from './constants';
 import { TANK_PARAMS } from './params';
 import { createMatch, forceMove, isMoveActive, step } from './step';
 
@@ -21,6 +21,7 @@ export function computeFrameData(tank: number): FrameData[] {
   const t = TANK_PARAMS[tank]!;
   for (const def of MOVES) {
     const m = t.moves.find((x) => x.def.id === def.id)!;
+    if (!m.allowed) continue;
     if (def.id === 'throw') {
       out.push({
         id: def.id, name: m.def.name, startup: THROW_STARTUP, active: THROW_ACTIVE, recovery: THROW_RECOVERY,
@@ -42,7 +43,9 @@ export function computeFrameData(tank: number): FrameData[] {
       frame++;
       step(s, 0, 0);
       const f = s.fighters[0];
-      if (isMoveActive(f)) {
+      // Pocisk liczymy jako fazę aktywną w klatce wystrzału.
+      const spawned = s.events.some((e) => e.type === EV_SPAWN);
+      if (isMoveActive(f) || spawned) {
         if (first < 0) first = frame;
         active++;
       }
@@ -56,7 +59,8 @@ export function computeFrameData(tank: number): FrameData[] {
       active,
       recovery: first < 0 ? total : total - first - active + 1,
       total,
-      damage: m.damage * m.maxHits,
+      // Ruchy z pociskiem: obrażenia pocisku.
+      damage: m.keys.some((k) => k.spawn >= 0) ? t.projectiles[m.keys.find((k) => k.spawn >= 0)!.spawn]!.hit.damage : m.damage * m.maxHits,
       level: def.level,
       kind: def.kind === 'linear' ? 'linear' : 'rotational',
     });

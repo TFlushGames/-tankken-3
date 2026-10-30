@@ -2,7 +2,7 @@
 // Wyłącznie arytmetyka całkowita, bez DOM, bez three.js, bez Math.random i czasu rzeczywistego.
 import {
   ARENA_RADIUS, DASH_BACK_SCALE, DASH_CANCEL, DASH_PROFILE, DOUBLE_TAP, EV_BLAST, EV_DASH, EV_FIRE, EV_PLANT,
-  SHOT_RANGE, ST_DASH, EV_BLOCK, EV_FIGHT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_ROUND, EV_SHOT, EV_TECH,
+  SHOT_RANGE, ST_DASH, EV_BLOCK, EV_CLASH, EV_HOOK, EV_PROJ_END, EV_SPAWN, EV_TELEPORT, EV_FIGHT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_ROUND, EV_SHOT, EV_TECH,
   EV_THROW, EV_TIMEUP, EV_WALL, EV_WHOOSH, FIGHT_CALL_FRAME, GETUP_FRAMES, HIST_LEN, INTRO_FRAMES,
   KNOCKDOWN_FRAMES, KO_FRAMES, PH_FIGHT, PH_INTRO, PH_KO, PH_MATCH_END, RUN_MAX, SIDESTEP_INVULN,
   SIDESTEP_PROFILE, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_BLOCKSTUN, ST_CROUCH, ST_GETUP, ST_HITSTUN,
@@ -129,6 +129,8 @@ export function createMatch(tank1: number, tank2: number, seed: number, opts: Pa
     opts: o,
     fighters: [createFighter(tank1, 0), createFighter(tank2, 1)],
     events: [],
+    projectiles: [],
+    nextProj: 1,
   };
 }
 
@@ -147,6 +149,7 @@ function resetRound(s: GameState): void {
   s.slowmo = 0;
   s.camRight = 0;
   s.roundWinner = -1;
+  s.projectiles = [];
 }
 
 function emit(s: GameState, type: number, actor: number, p: Point3, power: number): void {
@@ -233,10 +236,19 @@ function sequenceMatches(f: FighterState, move: CompiledMove): boolean {
   const strict = move.def.input.strict ?? false;
   let idx = seq.length - 1;
   const window = move.def.input.window;
-  for (let ago = 0; ago < window + 8 * (seq.length - 1) && ago < HIST_LEN; ago++) {
-    if (dirMatches(histRel(f, ago), seq[idx]!, strict)) {
+  // Każdy element sekwencji to osobne wciśnięcie: po dopasowaniu pomijamy klatki, w których
+  // ten sam kierunek jest wciąż trzymany (dzięki temu „dół, dół” wymaga dwóch stuknięć).
+  let holding = false;
+  for (let ago = 0; ago < window + 10 * (seq.length - 1) && ago < HIST_LEN; ago++) {
+    const rel = histRel(f, ago);
+    if (holding) {
+      if (dirMatches(rel, seq[idx + 1]!, strict)) continue;
+      holding = false;
+    }
+    if (dirMatches(rel, seq[idx]!, strict)) {
       if (idx === 0) return true;
       idx--;
+      holding = true;
     } else if (idx === seq.length - 1 && ago >= window) {
       return false;
     }
@@ -247,6 +259,7 @@ function sequenceMatches(f: FighterState, move: CompiledMove): boolean {
 function stanceOf(f: FighterState): MoveStance | null {
   switch (f.state) {
     case ST_IDLE:
+    case ST_LAND:
       return 'stand';
     case ST_CROUCH:
       return 'crouch';
@@ -268,7 +281,7 @@ function findMove(f: FighterState, o: FighterState, pressed: number, input: numb
   if (stance === null) return null;
   const t = tankOf(f);
   for (const m of t.moves) {
-    if (m.def.chainOnly) continue;
+    if (m.def.chainOnly || !m.allowed) continue;
     if (!(pressed & BUTTON_BITS[m.def.input.button])) continue;
     if (m.def.input.withRun && !(input & IN_RUN)) continue;
     if (!m.def.stance.includes(stance)) continue;
@@ -347,7 +360,7 @@ function enterKey(s: GameState, i: number): void {
     const [along, perp] = axisVel(f, aim);
     setAxisVel(f, aim, along + k.impulse, perp);
   }
-  if (k.vyImpulse !== 0) {
+  if (k.vyImpulse !== 0 && k.teleport === null) {
     f.vy += k.vyImpulse;
     if (f.vy > 0 && f.y <= 0) f.y = 1;
   }
@@ -376,21 +389,52 @@ function enterKey(s: GameState, i: number): void {
     const [, perp] = axisVel(f, aim);
     setAxisVel(f, aim, along, Math.trunc(perp / 4));
   }
-  if (k.fire) {
-    const d = barrelDir(f, t);
-    const tip = barrelTip(f, t);
-    if (k.recoil !== 0) {
-      f.vx -= trigMul(k.recoil, d.x);
-      f.vy -= trigMul(k.recoil, d.y);
-      f.vz -= trigMul(k.recoil, d.z);
-      if (f.vy > 0 && f.y <= 0) f.y = 1;
+  if (k.invuln > 0) f.invuln = Math.max(f.invuln, k.invuln);
+  if (k.teleport !== null) {
+    // Zniknięcie i powrót zza pleców przeciwnika, wysoko nad areną.
+    const o = s.fighters[1 - i]!;
+    emit(s, EV_TELEPORT, i, f, 0);
+    const dx = o.x - f.x;
+    const dz = o.z - f.z;
+    const len = Math.max(1, isqrt(dx * dx + dz * dz));
+    const dist = t.halfLen + tankOf(o).halfLen + k.teleport;
+    f.x = o.x + Math.trunc((dx * dist) / len);
+    f.z = o.z + Math.trunc((dz * dist) / len);
+    const lim = ARENA_RADIUS - t.halfLen - 500;
+    const r = isqrt(f.x * f.x + f.z * f.z);
+    if (r > lim) {
+      // Za plecami jest ściana – pojawia się po przeciwnej stronie.
+      f.x = o.x - Math.trunc((dx * dist) / len);
+      f.z = o.z - Math.trunc((dz * dist) / len);
     }
-    emit(s, k.fire === 'blast' ? EV_BLAST : EV_FIRE, i, tip, m.damage);
+    f.y = 9000;
+    f.vx = 0;
+    f.vz = 0;
+    f.vy = k.vyImpulse;
+    f.hullYaw = aimAngle(f, o);
+    f.pivot = 0;
+    f.spinBase = 0;
+    f.moveBaseYaw = 0;
+    f.turretYaw = 0;
+    emit(s, EV_TELEPORT, i, f, 1);
+  }
+  if (k.spawn >= 0) spawnProjectile(s, i, k.spawn);
+  if (k.recoil !== 0) {
+    // Odrzut wystrzału – przeciwnie do kierunku lufy, słabszy dla cięższych.
+    const d = barrelDir(f, t);
+    f.vx -= trigMul(k.recoil, d.x);
+    f.vy -= trigMul(k.recoil, d.y);
+    f.vz -= trigMul(k.recoil, d.z);
+    if (f.vy > 0 && f.y <= 0) f.y = 1;
+  }
+  if (k.fire) {
+    const tip = barrelTip(f, t);
+    emit(s, k.fire === 'blast' ? EV_BLAST : k.fire === 'hook' ? EV_HOOK : EV_FIRE, i, tip, m.damage);
   }
   if (k.active && !k.fire) {
     emit(s, EV_WHOOSH, i, barrelTip(f, t), m.damage);
     // Mocny cios odrywa gąsienice od ziemi – czołg „wchodzi” w uderzenie całym ciężarem.
-    if (f.y <= 0 && k.bodyPitch === null && !k.plant && m.damage >= 70) {
+    if (f.y <= 0 && k.bodyPitch === null && !k.plant && m.damage >= 70 && m.def.source !== 'shockwave') {
       f.vy = Math.max(f.vy, Math.trunc((STRIKE_HOP * clamp(t.kickScale, 700, 1400)) / 1000));
       f.y = 1;
     }
@@ -467,18 +511,6 @@ function reached(f: FighterState, tg: Targets, k: CompiledMove['keys'][number]):
   return true;
 }
 
-function settled(f: FighterState, tg: Targets, t: TankParams): boolean {
-  return (
-    Math.abs(tg.yaw - f.turretYaw) <= TOL_YAW * 2 &&
-    Math.abs(f.turretVel) <= t.turretAccel * 2 &&
-    Math.abs(tg.pitch - f.pitch) <= TOL_PITCH * 2 &&
-    Math.abs(f.ext) <= TOL_EXT * 2 &&
-    Math.abs(f.lift) <= TOL_LIFT * 2 &&
-    Math.abs(signedAngle(f.pivot)) <= TOL_PIVOT * 2 &&
-    Math.abs(signedAngle(f.bodyPitch)) <= TOL_PIVOT * 2
-  );
-}
-
 /** Postęp ataku: przejścia między klatkami kluczowymi na podstawie osiągnięcia celu. */
 function advanceMove(s: GameState, i: number, tg: Targets): void {
   const f = s.fighters[i]!;
@@ -500,7 +532,9 @@ function advanceMove(s: GameState, i: number, tg: Targets): void {
     return;
   }
   if (f.moveKey === m.keys.length) {
-    if (settled(f, tg, t) || f.keyFrame > 90) {
+    // Nie czekamy, aż wieża fizycznie się zatrzyma – wraca na miejsce już po oddaniu kontroli.
+    // Czekamy tylko na powrót kadłuba do pionu po akrobacji.
+    if (Math.abs(signedAngle(f.bodyPitch)) <= 3000 || f.keyFrame > 30) {
       f.moveKey++;
       f.keyFrame = 0;
     }
@@ -519,7 +553,8 @@ function endMove(f: FighterState): void {
   f.bodyPitch = signedAngle(f.bodyPitch);
   f.moveBaseYaw = 0;
   if (m?.def.resetAir) f.airAttackUsed = 0;
-  if (f.y > 0) {
+  // Mały podskok przy ciosie nie jest „skokiem” – po nim od razu można działać dalej.
+  if (f.y > 400) {
     setState(f, ST_AIR);
   } else {
     setState(f, f.crouching ? ST_CROUCH : ST_IDLE);
@@ -538,7 +573,10 @@ function isActive(f: FighterState): CompiledMove | null {
 // ---------------------------------------------------------------- logika stanów
 
 function canAct(f: FighterState): boolean {
-  return f.state === ST_IDLE || f.state === ST_CROUCH || f.state === ST_RUN || (f.state === ST_DASH && f.stateFrame >= DASH_CANCEL);
+  return (
+    f.state === ST_IDLE || f.state === ST_CROUCH || f.state === ST_RUN || f.state === ST_LAND ||
+    (f.state === ST_DASH && f.stateFrame >= DASH_CANCEL)
+  );
 }
 
 /** Podwójne stuknięcie kierunku: wciśnięty teraz, puszczony klatkę temu, wciśnięty niedawno wcześniej. */
@@ -971,7 +1009,7 @@ function hitTest(s: GameState, i: number, m: CompiledMove): Point3 | null {
     if (a.y > 0 || d.y > 400) return null;
     const dx = d.x - a.x;
     const dz = d.z - a.z;
-    const reach = at.halfLen + dt.halfLen + 1400;
+    const reach = at.halfLen + dt.halfLen + m.reach;
     if (dx * dx + dz * dz > reach * reach) return null;
     return { x: (a.x + d.x) >> 1, y: 200, z: (a.z + d.z) >> 1 };
   }
@@ -1035,6 +1073,8 @@ interface PendingHit {
   attacker: number;
   move: CompiledMove;
   point: Point3;
+  /** Trafienie pociskiem – atakujący nie jest w ruchu, który by „trafił”. */
+  proj?: boolean;
 }
 
 /** Zatrzymanie przy trafieniu zależne od masy atakującego – ciężki cios „siedzi” dłużej. */
@@ -1051,10 +1091,12 @@ function resolveHit(s: GameState, h: PendingHit): void {
   const m = h.move;
   const aim = aimAngle(a, d);
   const massFactor = Math.trunc(((at.mass + REF_MASS) * 1000) / (dt.mass + REF_MASS));
-  a.hitsDone++;
-  a.rehitTimer = m.rehit;
-  a.moveConnected = 1;
-  const multi = a.hitsDone < m.maxHits;
+  if (!h.proj) {
+    a.hitsDone++;
+    a.rehitTimer = m.rehit;
+    a.moveConnected = 1;
+  }
+  const multi = h.proj || a.hitsDone < m.maxHits;
   if (!multi) {
     // Trafienie wytraca pęd – lufa się odbija.
     a.turretVel = -Math.trunc(a.turretVel / 3);
@@ -1080,7 +1122,7 @@ function resolveHit(s: GameState, h: PendingHit): void {
     return;
   }
 
-  let dmg = Math.trunc((m.damage * speedFactor(a, at, m)) / 1000);
+  let dmg = h.proj ? m.damage : Math.trunc((m.damage * speedFactor(a, at, m)) / 1000);
   // Skalowanie obrażeń w kombo.
   if (d.combo > 0) dmg = Math.trunc((dmg * Math.max(400, 1000 - d.combo * 150)) / 1000);
   dmg = Math.max(1, dmg);
@@ -1115,6 +1157,13 @@ function resolveHit(s: GameState, h: PendingHit): void {
   const [, perp] = axisVel(d, aim);
   setAxisVel(d, aim, kb, perp);
   d.suspVel += Math.trunc(kb / 2);
+  if (m.def.pull) {
+    // Harpun: przeciwnik leci przed atakującego (ok. 10 klatek, w powietrzu – bez tarcia).
+    const gap = isqrt((d.x - a.x) * (d.x - a.x) + (d.z - a.z) * (d.z - a.z)) - at.halfLen - dt.halfLen - 400;
+    setAxisVel(d, aim, -Math.max(0, Math.trunc(gap / 10)), 0);
+    d.vy = Math.max(d.vy, 150);
+    d.y = Math.max(d.y, 1);
+  }
   // Amortyzacja: trafiony czołg odrywa się od ziemi i odchyla do tyłu (przód w górę).
   if (d.state === ST_HITSTUN) {
     d.vy = Math.max(d.vy, HIT_HOP + Math.trunc(kb / 3));
@@ -1123,6 +1172,87 @@ function resolveHit(s: GameState, h: PendingHit): void {
   d.bodyPitchVel = clamp(Math.trunc((kb * 6 * massFactor) / 1000), 150, dt.flipMaxVel >> 1) * (d.facingRight ? 1 : 1);
   s.hitstop = Math.max(s.hitstop, weightedHitstop(m.def.hitstop, at));
   emit(s, EV_HIT, i, h.point, dmg);
+}
+
+// ---------------------------------------------------------------- pociski
+
+function spawnProjectile(s: GameState, i: number, kind: number): void {
+  const f = s.fighters[i]!;
+  const o = s.fighters[1 - i]!;
+  const t = tankOf(f);
+  const pd = t.projectiles[kind]!;
+  const aim = aimAngle(f, o);
+  const tip = barrelTip(f, t);
+  const ground = pd.def.ground;
+  const start = ground ? t.halfLen + 400 : 0;
+  const p = {
+    id: s.nextProj++,
+    kind,
+    owner: i,
+    x: ground ? f.x + trigMul(start, icos(aim)) : tip.x,
+    y: ground ? 300 : Math.max(500, tip.y),
+    z: ground ? f.z + trigMul(start, isin(aim)) : tip.z,
+    vx: trigMul(pd.speed, icos(aim)),
+    vz: trigMul(pd.speed, isin(aim)),
+    life: pd.life,
+  };
+  s.projectiles.push(p);
+  emit(s, EV_SPAWN, i, p, kind);
+}
+
+/** Ruch pocisków, zderzenia pocisków ze sobą i trafienia w zawodników. */
+function updateProjectiles(s: GameState): void {
+  const list = s.projectiles;
+  for (const p of list) {
+    p.x += p.vx;
+    p.z += p.vz;
+    p.life--;
+    if (p.x * p.x + p.z * p.z > ARENA_RADIUS * ARENA_RADIUS) p.life = 0;
+  }
+  // Dwa pociski przeciwników znoszą się nawzajem.
+  for (let a = 0; a < list.length; a++) {
+    for (let b = a + 1; b < list.length; b++) {
+      const pa = list[a]!;
+      const pb = list[b]!;
+      if (pa.owner === pb.owner || pa.life <= 0 || pb.life <= 0) continue;
+      const ra = tankOf(s.fighters[pa.owner]!).projectiles[pa.kind]!.radius;
+      const rb = tankOf(s.fighters[pb.owner]!).projectiles[pb.kind]!.radius;
+      // Najmniejsza odległość w tej klatce (szybkie pociski mogłyby się „minąć” między klatkami).
+      const wx = pa.vx - pb.vx;
+      const wz = pa.vz - pb.vz;
+      const r0x = pa.x - pb.x - wx;
+      const r0z = pa.z - pb.z - wz;
+      const ww = wx * wx + wz * wz;
+      const tq = ww > 0 ? clamp(Math.trunc((-(r0x * wx + r0z * wz) * 1000) / ww), 0, 1000) : 1000;
+      const dx = r0x + Math.trunc((wx * tq) / 1000);
+      const dz = r0z + Math.trunc((wz * tq) / 1000);
+      if (dx * dx + dz * dz <= (ra + rb) * (ra + rb)) {
+        pa.life = 0;
+        pb.life = 0;
+        emit(s, EV_CLASH, -1, { x: (pa.x + pb.x) >> 1, y: (pa.y + pb.y) >> 1, z: (pa.z + pb.z) >> 1 }, 1);
+      }
+    }
+  }
+  for (const p of list) {
+    if (p.life <= 0) continue;
+    const d = s.fighters[1 - p.owner]!;
+    const dt = tankOf(d);
+    const pd = tankOf(s.fighters[p.owner]!).projectiles[p.kind]!;
+    if (d.invuln > 0 || d.linearInvuln > 0 || d.state === ST_KO || d.state === ST_THROWN || d.state === ST_KNOCKDOWN || d.state === ST_GETUP) continue;
+    if (pd.def.level === 'high' && d.crouching && d.y <= 0) continue;
+    // Pocisk na wysokości lufy trafia stojącego przeciwnika niezależnie od jego wzrostu;
+    // fala przy ziemi trafia tylko tego, kto stoi na ziemi.
+    const grounded = d.y <= 0 && Math.abs(signedAngle(d.bodyPitch)) < 2000;
+    if (pd.def.ground && !grounded) continue;
+    const y = grounded ? clamp(p.y, d.y + 200, hullTop(d, dt)) : p.y;
+    const pt = { x: p.x, y, z: p.z };
+    if (pointHitsFighter(pt, pd.radius, d, dt)) {
+      p.life = 0;
+      resolveHit(s, { attacker: p.owner, move: pd.hit, point: { x: p.x, y: p.y, z: p.z }, proj: true });
+    }
+  }
+  for (const p of list) if (p.life <= 0) emit(s, EV_PROJ_END, p.owner, p, p.kind);
+  s.projectiles = list.filter((p) => p.life > 0);
 }
 
 // ---------------------------------------------------------------- fizyka świata
@@ -1383,6 +1513,7 @@ export function step(s: GameState, in1: number, in2: number): GameState {
     if (p) hits.push({ attacker: i, move: m, point: p });
   }
   for (const h of hits) resolveHit(s, h);
+  updateProjectiles(s);
 
   for (let i = 0; i < 2; i++) {
     const f = s.fighters[i]!;

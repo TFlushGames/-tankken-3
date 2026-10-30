@@ -15,6 +15,13 @@ Miejsca, w których specyfikacja zostawiała wybór, i co wybrano.
 - **Przechyły**: ataki mają mocniejsze uniesienie/opuszczenie przodu kadłuba (pancerny zrzut nurkuje nosem ~28°). Pochylenie w locie i salto po wyrzucie liczy renderer z prędkości i stanu – nie wpływa na symulację.
 - **Lufa**: oś elewacji (czopy) jest z przodu wieży, a lufa wysuwa się teleskopowo z kołyski przymocowanej do jarzma – w symulacji i w modelu, więc lufa nigdy nie odstaje od wieży.
 
+## Wersja 5: ataki specjalne
+- Każdy czołg ma 3 ataki specjalne (`owner` w `moves.ts`) wykonywane sekwencją kierunków + przycisk. Każdy kierunek w sekwencji musi być osobnym wciśnięciem (trzymanie „dół” + HK to zwykły cios, „dół, dół” + HK – trzęsienie ziemi).
+- Pociski (`/src/data/projectiles.ts`) są w stanie symulacji (deterministyczne, z id do interpolacji w rendererze). Zderzenie pocisków liczone po najmniejszej odległości w klatce (szybki railgun nie „przeskoczy” innego pocisku).
+- Teleport WASP-a: czołg wylatuje w górę poza kadr (kamera nie podąża wyżej niż 2,5 m), pojawia się za plecami przeciwnika (albo przed nim, gdy za plecami jest ściana) i spada gąsienicami.
+- Inspiracja: układ wejść i role ataków jak w MK4 (pocisk, teleport, harpun, przeciwlotnicze podbicie); nazwy i wykonanie własne.
+- **Przerwy po ciosach**: wybrzmienie nie czeka już na fizyczne zatrzymanie wieży, a mały podskok przy ciosie nie przechodzi przez stan lądowania; z lądowania można od razu atakować.
+
 ## Wersja 4
 - Interfejs w stylu współczesnych bijatyk: półprzezroczyste panele z rozmyciem, ukośne kształty, akcenty kolorów graczy (pomarańcz / błękit), smukłe paski życia z „duchem” obrażeń, licznik czasu w heksagonalnej plakietce, rombowe znaczniki rund, animowane komunikaty. Krój pisma: Chakra Petch + Inter z Google Fonts (jedyny zasób zewnętrzny; bez internetu gra spada na czcionki systemowe).
 - Kamera: płaszczyzna bliska rośnie z odległością kamery, a drzewa stoją dalej niż jej zasięg – nic nie zasłania walki.

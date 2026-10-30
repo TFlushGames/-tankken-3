@@ -1,7 +1,7 @@
 // Dźwięk proceduralny (WebAudio): silniki, gąsienice, zgrzyt wieży, uderzenia, wybuchy, gong.
 import {
   EV_BLOCK, EV_FIGHT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_ROUND, EV_SHOT, EV_TECH, EV_THROW, EV_TIMEUP,
-  EV_WALL, EV_WHOOSH,
+  EV_WALL, EV_WHOOSH, EV_SPAWN, EV_CLASH, EV_TELEPORT, EV_HOOK, EV_BLAST, EV_FIRE,
 } from '../sim/constants';
 import type { GameState, SimEvent } from '../sim/types';
 import { TANK_PARAMS } from '../sim/params';
@@ -331,6 +331,24 @@ export class AudioEngine {
           break;
         case EV_JUMP:
           this.thump(0.2);
+          break;
+        case EV_SPAWN:
+        case EV_FIRE:
+        case EV_BLAST:
+          // Wystrzał z działa: huk + trzask.
+          this.thump(1.0);
+          this.shot();
+          this.clang(0.3, 0.5);
+          break;
+        case EV_CLASH:
+          this.explosion();
+          break;
+        case EV_TELEPORT:
+          this.whoosh(400);
+          break;
+        case EV_HOOK:
+          this.whoosh(200);
+          this.clang(0.25, 2.2);
           break;
         default:
           break;

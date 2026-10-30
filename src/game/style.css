@@ -158,13 +158,20 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
 .hud-debug { position: absolute; left: 24px; bottom: 16px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; white-space: pre; background: rgba(6,7,10,0.7); border: 1px solid var(--line); border-radius: 3px; padding: 7px 10px; color: #b8f5c8; }
 
 /* ---------- trening */
-.fd-panel { position: fixed; right: 16px; bottom: 16px; width: min(400px, 40vw); background: var(--glass-strong); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; font-size: 11px; pointer-events: none; backdrop-filter: blur(10px); z-index: 3; }
+.fd-panel { position: fixed; right: 16px; top: 112px; max-height: calc(100vh - 128px); overflow: hidden; width: min(450px, 42vw); background: var(--glass-strong); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; font-size: 11px; pointer-events: none; backdrop-filter: blur(10px); z-index: 3; }
 .fd-title { font-family: var(--font-display); font-weight: 700; font-size: 16px; letter-spacing: 0.14em; color: var(--p1); }
 .fd-mode { color: var(--muted); margin: 2px 0; }
 .fd { width: 100%; border-collapse: collapse; margin: 6px 0; font-variant-numeric: tabular-nums; }
 .fd th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); padding: 3px; }
 .fd td { padding: 2px 3px; border-bottom: 1px solid rgba(255,255,255,0.04); }
 .fd td:nth-child(2), .fd td:nth-child(3), .fd td:nth-child(4), .fd td:nth-child(5) { text-align: right; color: #fff; }
+
+/* lista ruchów w treningu */
+.ml-head { margin: 10px 0 2px; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.2em; color: var(--p2); }
+.fd.ml td { padding: 3px; }
+.fd.ml td:nth-child(2), .fd.ml td:nth-child(3) { text-align: left; }
+.ml-arrows { font-family: var(--font-display); font-weight: 700; font-size: 13px; color: var(--gold) !important; white-space: nowrap; }
+.ml-keys { font-family: var(--font-display); font-weight: 600; color: var(--muted) !important; white-space: nowrap; }
 
 /* ---------- efekty komiksowe */
 .comic-layer { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }

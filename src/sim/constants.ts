@@ -45,6 +45,11 @@ export const EV_DASH = 14;
 export const EV_PLANT = 15;
 export const EV_FIRE = 16;
 export const EV_BLAST = 17;
+export const EV_SPAWN = 18;
+export const EV_CLASH = 19;
+export const EV_TELEPORT = 20;
+export const EV_HOOK = 21;
+export const EV_PROJ_END = 22;
 
 export const ARENA_RADIUS = 15000;
 export const INTRO_FRAMES = 100;

@@ -6,9 +6,10 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+import { PROJECTILES } from '../data/projectiles';
 import { TANKS } from '../data/tanks';
 import {
-  EV_BLAST, EV_BLOCK, EV_DASH, EV_FIRE, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_PLANT, EV_SHOT, EV_TECH, EV_THROW, EV_WALL, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_KNOCKDOWN,
+  EV_BLAST, EV_BLOCK, EV_CLASH, EV_DASH, EV_FIRE, EV_HOOK, EV_PROJ_END, EV_SPAWN, EV_TELEPORT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_PLANT, EV_SHOT, EV_TECH, EV_THROW, EV_WALL, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_KNOCKDOWN,
   ST_KO, ST_RUN,
 } from '../sim/constants';
 import { icos, isin } from '../sim/fixed';
@@ -361,6 +362,36 @@ export class GameRenderer {
         if (e.type !== EV_THROW) this.shake.add(Math.min(0.7, 0.1 + power * 0.4));
         break;
       }
+      case EV_SPAWN:
+        this.sparks.burst(10, { x: p.x, y: p.y, z: p.z, life: 0.12, size: 1.1, color: new THREE.Color(1, 0.8, 0.45) }, 1.5);
+        this.puffs.spawn(p, new THREE.Vector3(0, 1, 0), 0.9, 0.7, new THREE.Color(0.85, 0.82, 0.78));
+        this.shake.add(PROJECTILES[e.power]?.id === 'bertha' ? 0.5 : 0.25);
+        this.fovKick = Math.max(this.fovKick, 2.5);
+        break;
+      case EV_CLASH:
+        this.sparks.burst(60, { x: p.x, y: p.y, z: p.z, life: 0.5, size: 0.2, color: new THREE.Color(1, 0.75, 0.3), gravity: 6, drag: 1.5 }, 12);
+        this.impacts.spawn(p, 1);
+        this.puffs.ring(p, 10, 0.5, 6, 0.9, new THREE.Color(0.8, 0.76, 0.7));
+        this.shake.add(0.6);
+        break;
+      case EV_PROJ_END:
+        this.puffs.spawn(p, new THREE.Vector3(0, 1, 0), 0.6, 0.4, new THREE.Color(0.8, 0.76, 0.7));
+        break;
+      case EV_TELEPORT:
+        // Zniknięcie/pojawienie się: kłąb dymu i iskry.
+        this.puffs.ring(new THREE.Vector3(p.x, Math.max(0.3, p.y), p.z), 14, 1.2, 6, 1.0, e.power ? new THREE.Color(0.95, 0.75, 0.4) : this.dustColor);
+        this.sparks.burst(30, { x: p.x, y: Math.max(0.5, p.y), z: p.z, life: 0.4, size: 0.15, color: new THREE.Color(1, 0.8, 0.35), drag: 2 }, 9);
+        break;
+      case EV_HOOK: {
+        const a = s.fighters[e.actor]!;
+        const o = s.fighters[1 - e.actor]!;
+        const to = new THREE.Vector3(o.x / 1000, p.y, o.z / 1000);
+        void a;
+        this.tracers.fire(p, to, new THREE.Color(0.55, 0.95, 1), 0.07);
+        this.tracers.fire(p, to, new THREE.Color(0.2, 0.5, 0.6), 0.16);
+        this.shake.add(0.2);
+        break;
+      }
       case EV_KO:
         this.explode(e.actor, s);
         break;
@@ -446,6 +477,7 @@ export class GameRenderer {
     this.camera.fov = 35 - this.fovKick;
     this.camera.updateProjectionMatrix();
     this.arena?.marks.flush();
+    this.updateProjectiles(prev, curr, alpha, dt);
     this.updateCamera(prev, curr, alpha, dt);
     this.updateDebug(curr);
     this.draw();
@@ -570,8 +602,9 @@ export class GameRenderer {
     const az = lerp(a0.z, a1.z, t) / 1000;
     const bx = lerp(b0.x, b1.x, t) / 1000;
     const bz = lerp(b0.z, b1.z, t) / 1000;
-    const ay = lerp(a0.y, a1.y, t) / 1000;
-    const by = lerp(b0.y, b1.y, t) / 1000;
+    // Kamera nie leci za czołgiem wyskakującym poza arenę.
+    const ay = Math.min(2.5, lerp(a0.y, a1.y, t) / 1000);
+    const by = Math.min(2.5, lerp(b0.y, b1.y, t) / 1000);
     const midX = (ax + bx) / 2;
     const midZ = (az + bz) / 2;
     const sep = Math.hypot(bx - ax, bz - az);
@@ -603,6 +636,64 @@ export class GameRenderer {
       this.arena.sun.target.position.set(midX, 0, midZ);
       const [sx, sy, sz] = this.arena.def.sunDir;
       this.arena.sun.position.set(midX + sx * 40, sy * 40, midZ + sz * 40);
+    }
+  }
+
+  private projMeshes = new Map<number, THREE.Object3D>();
+
+  private makeProjectile(kind: string): THREE.Object3D {
+    const g = new THREE.Group();
+    const glow = (r: number, c: number, o: number): THREE.Mesh => new THREE.Mesh(
+      new THREE.SphereGeometry(r, 12, 8),
+      new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: o, blending: THREE.AdditiveBlending, depthWrite: false }));
+    if (kind === 'shell') {
+      g.add(new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), new THREE.MeshBasicMaterial({ color: 0xfff0b0 })), glow(0.5, 0xff9a30, 0.55));
+    } else if (kind === 'bertha') {
+      g.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 1), toonMat({ color: 0x3a3430, emissive: 0x401a08 })), glow(0.9, 0xff5a1a, 0.45));
+    } else if (kind === 'rail') {
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.14, 0.14), new THREE.MeshBasicMaterial({ color: 0xc8f6ff }));
+      beam.position.x = -1.4;
+      const halo = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.4, 0.4), new THREE.MeshBasicMaterial({ color: 0x3ad0ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+      halo.position.x = -1.5;
+      g.add(beam, halo);
+    }
+    this.scene.add(g);
+    return g;
+  }
+
+  /** Pociski: interpolacja pozycji po id, smugi i kurz fali. */
+  private updateProjectiles(prev: GameState, curr: GameState, t: number, dt: number): void {
+    const seen = new Set<number>();
+    for (const p of curr.projectiles) {
+      seen.add(p.id);
+      const kind = PROJECTILES[p.kind]!.id;
+      let mesh = this.projMeshes.get(p.id);
+      if (!mesh) {
+        mesh = this.makeProjectile(kind);
+        this.projMeshes.set(p.id, mesh);
+      }
+      const q = prev.projectiles.find((x) => x.id === p.id) ?? p;
+      const pos = new THREE.Vector3(lerp(q.x, p.x, t) / 1000, lerp(q.y, p.y, t) / 1000, lerp(q.z, p.z, t) / 1000);
+      mesh.position.copy(pos);
+      mesh.rotation.y = -Math.atan2(p.vz, p.vx);
+      mesh.rotation.x += dt * 8;
+      if (dt > 0) {
+        if (kind === 'wave') {
+          // Fala: wybrzuszenie ziemi – obłoczki kurzu i grudy.
+          this.puffs.ring(pos.clone().setY(0.2), 2, 0.6, 2.5, 0.55, this.dustColor);
+          this.sparks.spawn({ x: pos.x, y: 0.2, z: pos.z, vx: (Math.random() - 0.5) * 2, vy: 4 + Math.random() * 3, vz: (Math.random() - 0.5) * 2, life: 0.4, size: 0.12, color: new THREE.Color(0.5, 0.4, 0.3), gravity: 14 });
+        } else if (kind === 'bertha') {
+          this.puffs.spawn(pos, new THREE.Vector3(0, 0.5, 0), 0.5, 0.6, new THREE.Color(0.35, 0.32, 0.3));
+          this.sparks.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: 0, vy: 0.5, vz: 0, life: 0.25, size: 0.7, color: new THREE.Color(1, 0.45, 0.15) });
+        } else if (kind === 'shell') {
+          this.sparks.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: 0, vy: 0, vz: 0, life: 0.18, size: 0.4, color: new THREE.Color(1, 0.7, 0.3) });
+        }
+      }
+    }
+    for (const [id, mesh] of this.projMeshes) {
+      if (seen.has(id)) continue;
+      mesh.removeFromParent();
+      this.projMeshes.delete(id);
     }
   }
 

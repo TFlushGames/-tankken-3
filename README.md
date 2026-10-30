@@ -34,6 +34,27 @@ Gracz 2 musi mieć włączony NumLock. Klawisze można zmienić w **Ustawieniach
 
 Debug: **F1** hitboxy/hurtboxy, **F3** pauza w treningu, **F4** klatka po klatce, **F6** tabela frame data, **F7** tryb manekina, **Esc** pauza.
 
+## Ataki specjalne (jak w MK4: kierunki po kolei + przycisk)
+
+F = przód (do przeciwnika), B = tył, D = dół. Kierunki stukamy po kolei, potem przycisk. Lista z klawiszami jest w trybie treningu.
+
+| Czołg | Ruch | Wejście |
+|---|---|---|
+| WASP | Sky Ambush – wyskok poza arenę i powrót zza pleców | D, B + HP |
+| WASP | Hook Shot – harpun przyciągający przeciwnika | B, F + LP |
+| WASP | Sting Rush – wślizg z 3 trafieniami | D, F + LK |
+| THUNDER | Cannon Shell – pocisk (da się przykucnąć) | B, F + HP |
+| THUNDER | Rising Smash – nietykalne podbicie przeciwlotnicze | D, F + HP |
+| THUNDER | Ground Wave – fala po ziemi (przeskocz albo blok dolny) | D, B + LK |
+| MAMMOTH | Big Bertha – wolny, ogromny pocisk | B, F + HP |
+| MAMMOTH | Earthquake – trzęsienie ziemi dookoła | D, D + HK |
+| MAMMOTH | Bulldozer – długi taran przez arenę | B, F + LK |
+| COBRA | Railgun – ładowany, błyskawiczny strzał | B, F + HP |
+| COBRA | Drill Spin – obrót kadłubem z 3 trafieniami | D, F + HK |
+| COBRA | Ambush Slide – niski wślizg przewracający | D, B + LK |
+
+Pociski są obiektami symulacji: można je zablokować, przeskoczyć, ominąć unikiem, a dwa pociski znoszą się nawzajem.
+
 ## Kombo
 
 Powtarzanie przycisku w trakcie ataku płynnie przechodzi w kolejne ciosy:
