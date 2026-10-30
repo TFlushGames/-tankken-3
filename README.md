@@ -26,6 +26,10 @@ npm run preview    # podgląd buildu
 | Unik w głąb | B | Num 1 |
 | Unik do kamery | M | Num 3 |
 
+**Ruchy specjalne (dla obu graczy):** podwójne stuknięcie przód/tył – doskok; skok w powietrzu – podwójny skok z saltem; RUN + kierunek w powietrzu – doskok w powietrzu.
+
+**Akrobatyka (RUN + przycisk):** RUN+HK – skok o lufie (salto i lądowanie na przeciwniku), RUN+HP – młynek na lufie, RUN+LK – wybicie wystrzałem w ziemię, RUN+LP – szarża; w powietrzu RUN+HP/LP – strzał w locie z odrzutem.
+
 Gracz 2 musi mieć włączony NumLock. Klawisze można zmienić w **Ustawieniach** (zapis w localStorage). Jeśli jakaś kombinacja nie działa, winna jest zwykle klawiatura, która nie rejestruje wielu klawiszy naraz (ghosting).
 
 Debug: **F1** hitboxy/hurtboxy, **F3** pauza w treningu, **F4** klatka po klatce, **F6** tabela frame data, **F7** tryb manekina, **Esc** pauza.
@@ -42,12 +46,11 @@ Powtarzanie przycisku w trakcie ataku płynnie przechodzi w kolejne ciosy:
 
 ## Czołgi
 
-| | MAMUT | GROM | OSA |
-|---|---|---|---|
-| Rola | ciężki | zbalansowany | lekki, 2 karabiny |
-| Masa | 60 t | 35 t | 15 t |
-| Zasięg lufy | 5,5 m | 4,0 m | 2,2 m |
-| Wieża | 540°/s | 900°/s | 1500°/s |
+| | MAMUT | GROM | OSA | KOBRA |
+|---|---|---|---|---|
+| Wzór | ciężki, kanciasta wieża | średni, kopułowa wieża | lekki, wieża z tyłu, 2 lufy | niszczyciel bez wieży |
+| Masa | 60 t | 35 t | 15 t | 45 t |
+| Zasięg lufy | 5,5 m | 4,0 m | 2,2 m | 4,8 m |
 
 ## Architektura
 

@@ -8,7 +8,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 import { TANKS } from '../data/tanks';
 import {
-  EV_BLOCK, EV_HIT, EV_KO, EV_LAND, EV_SHOT, EV_TECH, EV_THROW, EV_WALL, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_KNOCKDOWN,
+  EV_BLAST, EV_BLOCK, EV_DASH, EV_FIRE, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_PLANT, EV_SHOT, EV_TECH, EV_THROW, EV_WALL, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_KNOCKDOWN,
   ST_KO, ST_RUN,
 } from '../sim/constants';
 import { icos, isin } from '../sim/fixed';
@@ -17,8 +17,8 @@ import { TANK_PARAMS } from '../sim/params';
 import { isMoveActive } from '../sim/step';
 import type { FighterState, GameState, SimEvent } from '../sim/types';
 import { ARENAS, Arena } from './arena';
-import { CameraShake, ComicText, DebrisSystem, ImpactFX, ParticleSystem, SwingTrail } from './effects';
-import { toonify } from './toon';
+import { CameraShake, ComicText, DebrisSystem, ImpactFX, ParticleSystem, PuffSystem, SwingTrail, Tracers } from './effects';
+import { toonMat } from './toon';
 import { TankModel } from './tankModel';
 
 export interface Quality {
@@ -74,6 +74,11 @@ export class GameRenderer {
   private readonly debris: DebrisSystem;
   private readonly shake = new CameraShake();
   private readonly impacts = new ImpactFX();
+  private readonly puffs = new PuffSystem(toonMat({ color: 0xffffff }));
+  private readonly tracers = new Tracers();
+  private vignette: ShaderPass;
+  /** Światło wypełniające od strony kamery – czołgi czytelne nawet pod słońce. */
+  private readonly fill = new THREE.DirectionalLight(0xffe2c4, 1.6);
   private readonly comic = new ComicText();
   private fovKick = 0;
   private readonly camPos = new THREE.Vector3(0, 5, 20);
@@ -98,17 +103,27 @@ export class GameRenderer {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMappingExposure = 1.1;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.debris = new DebrisSystem(this.scene);
-    this.scene.add(this.sparks.points, this.smoke.points, this.debugGroup, this.impacts.group);
+    this.scene.add(this.sparks.points, this.smoke.points, this.debugGroup, this.impacts.group, this.puffs.mesh, this.tracers.group);
+    this.scene.add(this.fill, this.fill.target);
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.88);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.28, 0.6, 0.9);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
+    // Winieta i lekkie ocieplenie – wieczorny, nieco mroczniejszy nastrój.
+    this.vignette = new ShaderPass({
+      uniforms: { tDiffuse: { value: null }, uStrength: { value: 0.55 } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: `uniform sampler2D tDiffuse; uniform float uStrength; varying vec2 vUv;
+        void main(){ vec4 c = texture2D(tDiffuse, vUv); vec2 d = vUv - 0.5; float v = smoothstep(0.85, 0.25, length(d * vec2(1.25, 1.0)));
+        c.rgb *= mix(1.0 - uStrength, 1.0, v); c.rgb = mix(c.rgb, c.rgb * vec3(1.04, 1.0, 0.94), 0.6); gl_FragColor = c; }`,
+    });
+    this.composer.addPass(this.vignette);
     this.fxaa = new ShaderPass(FXAAShader);
     this.composer.addPass(this.fxaa);
     this.buildDebug();
@@ -127,6 +142,8 @@ export class GameRenderer {
     });
     this.sparks.density = q.particles;
     this.smoke.density = q.particles;
+    this.puffs.density = q.particles;
+    if (this.arenaIndex >= 0) this.setArena(this.arenaIndex);
   }
 
   resize(): void {
@@ -142,11 +159,13 @@ export class GameRenderer {
     this.smoke.setScale(h * pr * 1.2);
   }
 
+  private arenaIndex = -1;
+
   setArena(index: number): void {
     if (this.arena) this.arena.dispose(this.scene);
-    const def = ARENAS[index % ARENAS.length]!;
-    this.arena = new Arena(def, this.scene);
-    toonify(this.arena.group);
+    this.arenaIndex = index % ARENAS.length;
+    const def = ARENAS[this.arenaIndex]!;
+    this.arena = new Arena(def, this.scene, this.quality.particles);
     this.dustColor.set(def.dust);
   }
 
@@ -283,12 +302,52 @@ export class GameRenderer {
         this.sparks.burst(3, { x: from.x, y: from.y, z: from.z, life: 0.06, size: 0.6, color: new THREE.Color(1, 0.8, 0.4) }, 0.2);
         break;
       }
+      case EV_DASH: {
+        const f = s.fighters[e.actor]!;
+        const v = this.views[e.actor];
+        if (v) {
+          const back = new THREE.Vector3(-v.model.def.hullLength / 2 * Math.sign(e.power || 1), 0.4, 0);
+          const p0 = v.model.root.localToWorld(back);
+          const dir = p0.clone().sub(new THREE.Vector3(f.x / 1000, 0.4, f.z / 1000)).setY(0).normalize();
+          for (let k = 0; k < 6; k++) this.puffs.spawn(p0.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.2, Math.random() * 0.4, (Math.random() - 0.5) * 1.2)), dir.clone().multiplyScalar(3 + Math.random() * 3), 0.55, 0.5, this.dustColor);
+        }
+        this.shake.add(0.08);
+        break;
+      }
+      case EV_JUMP:
+        this.puffs.ring(p, 8, 1.6, 4, 0.5, this.dustColor);
+        break;
+      case EV_PLANT:
+        this.puffs.ring(p, 7, 0.4, 3, 0.45, this.dustColor);
+        this.sparks.burst(16, { x: p.x, y: p.y + 0.1, z: p.z, life: 0.3, size: 0.1, color: new THREE.Color(1, 0.8, 0.4), gravity: 9, drag: 2 }, 6);
+        this.shake.add(0.15);
+        break;
+      case EV_FIRE: {
+        const a = s.fighters[e.actor]!;
+        const t = TANK_PARAMS[a.tank]!;
+        const dir = new THREE.Vector3(a.tipX - a.x, a.tipY - a.y - t.hullHeight / 2, a.tipZ - a.z).normalize();
+        this.tracers.fire(p, p.clone().addScaledVector(dir, 16), new THREE.Color(1, 0.75, 0.35));
+        this.sparks.burst(8, { x: p.x, y: p.y, z: p.z, life: 0.1, size: 0.9, color: new THREE.Color(1, 0.8, 0.4) }, 1);
+        this.puffs.spawn(p, dir.clone().multiplyScalar(2), 0.9, 0.6, new THREE.Color(0.85, 0.82, 0.78));
+        this.shake.add(0.3);
+        this.fovKick = Math.max(this.fovKick, 2);
+        break;
+      }
+      case EV_BLAST:
+        this.sparks.burst(50, { x: p.x, y: p.y, z: p.z, life: 0.5, size: 0.2, color: new THREE.Color(1, 0.6, 0.2), gravity: 8, drag: 1.5 }, 10);
+        this.sparks.burst(10, { x: p.x, y: p.y + 0.4, z: p.z, life: 0.3, size: 2.0, grow: 1, color: new THREE.Color(1, 0.6, 0.25), drag: 3 }, 2);
+        this.puffs.ring(p, 14, 1.0, 7, 1.0, new THREE.Color(0.75, 0.7, 0.62));
+        this.impacts.spawn(p, 0.9);
+        this.shake.add(0.7);
+        this.fovKick = Math.max(this.fovKick, 5);
+        break;
       case EV_LAND:
       case EV_WALL:
       case EV_THROW:
       case EV_TECH: {
         const power = Math.min(1.5, e.power / 40000);
-        const n = 10 + power * 20;
+        this.puffs.ring(new THREE.Vector3(p.x, 0.2, p.z), 6 + power * 8, 1.8, 3 + power * 4, 0.5 + power * 0.4, this.dustColor);
+        const n = 4 + power * 8;
         for (let k = 0; k < n * this.quality.particles; k++) {
           const a = Math.random() * Math.PI * 2;
           const sp = 2 + Math.random() * 3 * (0.5 + power);
@@ -371,6 +430,12 @@ export class GameRenderer {
     const slow = curr.slowmo > 0 ? 0.4 : 1;
     this.sparks.update(dt * slow);
     this.smoke.update(dt * slow);
+    this.puffs.update(dt * slow);
+    this.tracers.update(dt * slow);
+    if (this.arena) {
+      const tanks = curr.fighters.map((f) => new THREE.Vector3(f.x / 1000, f.z / 1000, f.y < 500 ? TANK_PARAMS[f.tank]!.halfLen / 1000 + 0.6 : 0.01));
+      this.arena.update(this.time, tanks);
+    }
     this.debris.update(dt, slow);
     this.impacts.update(dt * slow);
     this.shake.update(dt);
@@ -442,7 +507,7 @@ export class GameRenderer {
     let tilt = 0;
     if (b.state === ST_AIR || (b.state === ST_ATTACK && b.y > 0)) tilt = THREE.MathUtils.clamp(b.vy * 0.0009, -0.45, 0.45);
     if (b.state === ST_KNOCKDOWN && b.y <= 0) tilt = -0.12 + Math.sin(this.time * 18) * 0.03 * Math.max(0, 1 - b.stateFrame / 20);
-    m.spin.rotation.z = v.tumble + tilt;
+    m.spin.rotation.z = v.tumble + tilt + lerp(a.bodyPitch, b.bodyPitch, t) * DEG;
 
     // Smuga ciosu za końcem lufy.
     m.root.updateMatrixWorld(true);
@@ -521,6 +586,8 @@ export class GameRenderer {
     this.camLook.lerp(look, k);
     this.camera.position.copy(this.camPos).add(this.shake.offset);
     this.camera.lookAt(this.camLook);
+    this.fill.position.copy(this.camPos).setY(this.camPos.y + 6);
+    this.fill.target.position.copy(this.camLook);
     if (this.arena) {
       // Cień podąża za walką.
       this.arena.sun.target.position.set(midX, 0, midZ);
@@ -545,7 +612,7 @@ export class GameRenderer {
     for (let i = 0; i < 2; i++) {
       const v = this.views[i]!;
       const m = v.model;
-      m.root.position.set(i === 0 ? -4.2 : 4.2, 0, 0);
+      m.root.position.set(i === 0 ? -3.4 : 3.4, 0, 0);
       m.root.rotation.y = spin * (i === 0 ? 1 : -1) + (i === 0 ? 0.6 : Math.PI - 0.6);
       m.turret.rotation.y = Math.sin(this.time * 0.9 + i) * 0.5;
       m.mantlet.rotation.z = (Math.sin(this.time * 1.3 + i) * 0.5 + 0.5) * 0.25;
@@ -555,9 +622,14 @@ export class GameRenderer {
     }
     this.smoke.update(dt);
     this.sparks.update(dt);
-    const desired = new THREE.Vector3(0, 4.2, 15);
+    this.puffs.update(dt);
+    this.arena?.update(this.time, [new THREE.Vector3(-3.4, 0, 3.2), new THREE.Vector3(3.4, 0, 3.2)]);
+    this.fill.position.set(0, 10, 18);
+    this.fill.target.position.set(0, 1, 0);
+    // Kamera patrzy nad czołgi, by stały w dolnej części ekranu – pod panelami wyboru.
+    const desired = new THREE.Vector3(0, 3.0, 14);
     this.camPos.lerp(desired, Math.min(1, dt * 3));
-    this.camLook.lerp(new THREE.Vector3(0, 1.4, 0), Math.min(1, dt * 3));
+    this.camLook.lerp(new THREE.Vector3(0, 3.3, 0), Math.min(1, dt * 3));
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
     if (this.arena) {

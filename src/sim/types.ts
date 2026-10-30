@@ -3,7 +3,11 @@ import type { Button, RelDir } from './input';
 
 export type HitLevel = 'high' | 'mid' | 'low' | 'overhead';
 export type AttackKind = 'linear' | 'rotational';
-export type HitSource = 'barrel' | 'hull' | 'shockwave';
+/**
+ * Źródło hitboxa: lufa, przód kadłuba, fala przy lądowaniu, cały kadłub (akrobacje),
+ * pocisk (strzał wzdłuż lufy), wybuch przy wylocie lufy.
+ */
+export type HitSource = 'barrel' | 'hull' | 'shockwave' | 'body' | 'shot' | 'blast';
 export type MoveStance = 'stand' | 'crouch' | 'air' | 'run';
 
 /** Wejście ruchu: sekwencja kierunków względnych zakończona przyciskiem. */
@@ -14,6 +18,8 @@ export interface MoveInput {
   window: number;
   /** Dokładne dopasowanie kierunku (np. „F” nie pasuje do „DF”). */
   strict?: boolean;
+  /** Wymaga przytrzymanego RUN (akrobacje: RUN + przycisk). */
+  withRun?: boolean;
 }
 
 /**
@@ -42,6 +48,18 @@ export interface MoveKey {
   hold?: number;
   /** Maksymalna liczba klatek w fazie (zabezpieczenie). */
   timeout?: number;
+  /** Przewrót całego kadłuba przód–tył (stopnie, narastająco; ujemny = nosem w dół / do przodu). */
+  bodyPitch?: number;
+  /** Obrót całego kadłuba w poziomie względem początku ruchu (stopnie, np. 720 = dwa obroty). */
+  hullSpin?: number;
+  /** Lufa wbita w ziemię – czołg obraca się wokół jej końca jak wokół tyczki. */
+  plant?: boolean;
+  /** Skok naprowadzany: czołg ląduje w tej odległości (m) od przeciwnika (0 = na nim). */
+  leap?: number;
+  /** Wystrzał przy wejściu w fazę: pocisk wzdłuż lufy albo wybuch przy wylocie. */
+  fire?: 'shot' | 'blast';
+  /** Odrzut wystrzału (m/s, przeciwnie do kierunku lufy, skalowany masą). */
+  recoil?: number;
   /** Napęd bez hamowania (domyślnie w fazie aktywnej) – cios przelatuje przez cel. */
   slam?: boolean;
   /** Faza kończy się po wylądowaniu (pancerny zrzut). */
@@ -87,6 +105,8 @@ export interface MoveDef {
   chains?: ChainLink[];
   /** Ruch dostępny tylko jako kontynuacja łańcucha. */
   chainOnly?: boolean;
+  /** Po zakończeniu w powietrzu można znów atakować (np. wybicie wystrzałem). */
+  resetAir?: boolean;
 }
 
 /** Czołg zdefiniowany w jednostkach „ludzkich” (m, m/s, stopnie, tony). */
@@ -127,6 +147,8 @@ export interface TankDef {
   jumpSquat: number;
   barrelRadius: number;
   twinBarrels: boolean;
+  /** Niszczyciel bez obrotowej wieży – zamachy wykonuje cały kadłub. */
+  casemate?: boolean;
   /** Nadpisania ruchów dla czołgu (np. seria OSY). */
   moveOverrides?: Record<string, Partial<MoveDef>>;
 }
@@ -197,6 +219,14 @@ export interface FighterState {
   idleFrames: number;
   bounces: number;
   chainBuf: number;
+  bodyPitch: number;
+  bodyPitchVel: number;
+  planted: number;
+  plantX: number;
+  plantY: number;
+  plantZ: number;
+  spinBase: number;
+  dashUsed: number;
   chainTimer: number;
   prevInput: number;
   histHead: number;

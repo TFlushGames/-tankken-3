@@ -31,6 +31,8 @@ export function computeFrameData(tank: number): FrameData[] {
     const s = createMatch(tank, 1, 1, { training: 1 });
     // Przeciwnik daleko, by nic nie przerwało ruchu.
     s.fighters[1].x = 14000;
+    // Nietykalny – pociski mają duży zasięg i trafienie skróciłoby pomiar.
+    s.fighters[1].invuln = 1_000_000;
     forceMove(s, 0, def.id);
     let first = -1;
     let active = 0;

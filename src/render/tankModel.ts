@@ -1,11 +1,23 @@
-// Proceduralne modele czołgów w stylu komiksowym (toon + kontury).
+// Proceduralne modele czołgów, każdy wzorowany na innej klasie prawdziwych pojazdów:
+// MAMUT – ciężki o długim kadłubie i kanciastej wieży, GROM – średni z kopułową wieżą,
+// OSA – lekki z wieżą przesuniętą do tyłu i dwiema lufami, KOBRA – niszczyciel bez wieży (kazamata).
 // Hierarchia: korzeń → salto (obrót wokół środka) → podwozie (gąsienice, koła) + kadłub
-// (zawieszenie, uniesienie) → wieża (yaw) → jarzmo na czopach z przodu wieży (pitch)
-// → lufa wysuwana teleskopowo z kołyski (wysunięcie).
+// (zawieszenie, uniesienie) → wieża (yaw) → jarzmo na czopach (pitch) → lufa w kołysce (wysunięcie).
 import * as THREE from 'three';
 import type { TankDef } from '../sim/types';
-import { addOutlines, toonMat } from './toon';
+import { box, loft } from './loft';
 import { numberTexture, toonCamoTexture } from './textures';
+import { addOutlines, toonMat } from './toon';
+
+interface WheelStyle {
+  count: number;
+  /** Promień kół względem połowy wysokości gąsienicy. */
+  size: number;
+  /** Koła zachodzące na siebie w dwóch rzędach (ciężkie niemieckie). */
+  interleave: boolean;
+  /** Rolki podtrzymujące górny bieg gąsienicy. */
+  returnRollers: number;
+}
 
 export interface TankStyle {
   base: string;
@@ -14,61 +26,55 @@ export interface TankStyle {
   alt: [string, string, string];
   number: string;
   numberColor: string;
-  roadWheels: number;
+  wheels: WheelStyle;
   skirts: boolean;
-  spacedArmor: boolean;
-  muzzleBrake: 'big' | 'normal' | 'none';
-  fumeExtractor: boolean;
-  turretShape: 'wedge' | 'hex' | 'small';
 }
 
 export const TANK_STYLES: Record<string, TankStyle> = {
   mamut: {
-    base: '#6f7d3c',
-    patch: '#4c5a2a',
-    accent: '#ffc226',
-    alt: ['#8a4b3a', '#5e2f25', '#f0e6c8'],
+    base: '#5f6650',
+    patch: '#8a7b55',
+    accent: '#b0402a',
+    alt: ['#7a6248', '#4e3d2c', '#d9c38a'],
     number: '701',
-    numberColor: '#ffe9a8',
-    roadWheels: 7,
+    numberColor: '#e9e2c6',
+    wheels: { count: 9, size: 0.95, interleave: true, returnRollers: 0 },
     skirts: true,
-    spacedArmor: true,
-    muzzleBrake: 'big',
-    fumeExtractor: false,
-    turretShape: 'wedge',
   },
   grom: {
-    base: '#3d86b8',
-    patch: '#2b6390',
-    accent: '#f4f1e6',
-    alt: ['#b8463a', '#86302a', '#ffd23a'],
+    base: '#66733c',
+    patch: '#46522a',
+    accent: '#e8e2c4',
+    alt: ['#5d6b78', '#3e4a55', '#e8c25a'],
     number: '214',
-    numberColor: '#ffffff',
-    roadWheels: 5,
-    skirts: true,
-    spacedArmor: false,
-    muzzleBrake: 'normal',
-    fumeExtractor: true,
-    turretShape: 'hex',
+    numberColor: '#f2f0e0',
+    wheels: { count: 5, size: 0.98, interleave: false, returnRollers: 0 },
+    skirts: false,
   },
   osa: {
-    base: '#ee7a2a',
-    patch: '#c85a1a',
-    accent: '#1c1c22',
-    alt: ['#7a5ac8', '#5a3ea0', '#fff16a'],
+    base: '#6f8396',
+    patch: '#4f6070',
+    accent: '#e3b23c',
+    alt: ['#9a7a4c', '#6e5432', '#e8e2c4'],
     number: '07',
-    numberColor: '#1c1c22',
-    roadWheels: 4,
+    numberColor: '#ffe08a',
+    wheels: { count: 5, size: 0.7, interleave: false, returnRollers: 2 },
     skirts: false,
-    spacedArmor: false,
-    muzzleBrake: 'none',
-    fumeExtractor: false,
-    turretShape: 'small',
+  },
+  kobra: {
+    base: '#b39a5e',
+    patch: '#6e4a32',
+    accent: '#4c6a3a',
+    alt: ['#6a7a8c', '#3e4a58', '#c0c8d0'],
+    number: '33',
+    numberColor: '#2a2a2a',
+    wheels: { count: 8, size: 0.95, interleave: true, returnRollers: 0 },
+    skirts: true,
   },
 };
 
 const LINK_PITCH = 0.17;
-const OUTLINE = 0.035;
+const OUTLINE = 0.022;
 
 interface Track {
   mesh: THREE.InstancedMesh;
@@ -77,9 +83,20 @@ interface Track {
   count: number;
 }
 
+interface Mats {
+  armor: THREE.MeshToonMaterial;
+  accent: THREE.MeshToonMaterial;
+  dark: THREE.MeshToonMaterial;
+  steel: THREE.MeshToonMaterial;
+  rubber: THREE.MeshToonMaterial;
+  track: THREE.MeshToonMaterial;
+  glass: THREE.MeshToonMaterial;
+  wood: THREE.MeshToonMaterial;
+}
+
 export class TankModel {
   readonly root = new THREE.Group();
-  /** Grupa obracana przy saltach – oś obrotu w połowie wysokości kadłuba. */
+  /** Grupa obracana przy saltach – oś obrotu w połowie wysokości kadłuba (jak w symulacji). */
   readonly spin = new THREE.Group();
   private readonly inner = new THREE.Group();
   readonly chassis = new THREE.Group();
@@ -90,7 +107,6 @@ export class TankModel {
   readonly def: TankDef;
   readonly skirts: THREE.Mesh[] = [];
   readonly materials: THREE.MeshToonMaterial[] = [];
-  /** Punkty końca lufy w układzie lufy (do smugi ciosu). */
   readonly tipLocal: THREE.Vector3;
   readonly midLocal: THREE.Vector3;
   private tracks: Track[] = [];
@@ -104,8 +120,10 @@ export class TankModel {
   private readonly tmpS = new THREE.Vector3(1, 1, 1);
   private readonly axisZ = new THREE.Vector3(0, 0, 1);
   readonly trackH: number;
+  readonly trackW: number;
   readonly exhaust = new THREE.Vector3();
   readonly engineDeck = new THREE.Vector3();
+  private readonly m: Mats;
 
   constructor(def: TankDef, alt: boolean) {
     this.def = def;
@@ -113,21 +131,23 @@ export class TankModel {
     const L = def.hullLength;
     const W = def.hullWidth;
     const H = def.hullHeight;
-    const trackW = Math.max(0.42, W * 0.22);
-    const trackH = H * 0.56;
-    this.trackH = trackH;
-    this.trackR = trackH / 2;
+    this.trackW = Math.max(0.45, W * 0.22);
+    this.trackH = H * 0.55;
+    this.trackR = this.trackH / 2;
     this.trackA = L / 2 - this.trackR - 0.05;
     this.trackLen = 4 * this.trackA + 2 * Math.PI * this.trackR;
 
     const [base, patch, accentCol] = alt ? st.alt : [st.base, st.patch, st.accent];
-    const camo = toonCamoTexture(base, patch, def.id.length * 13 + (alt ? 5 : 0));
-    const armor = this.mat({ map: camo });
-    const accent = this.mat({ color: accentCol });
-    const dark = this.mat({ color: 0x2b2b30 });
-    const steel = this.mat({ color: 0x6b6e78 });
-    const rubber = this.mat({ color: 0x1e1e22 });
-    const trackMat = this.mat({ color: 0x3c3a40 });
+    this.m = {
+      armor: this.mat({ map: toonCamoTexture(base, patch, def.id.length * 13 + (alt ? 5 : 0)) }),
+      accent: this.mat({ color: accentCol }),
+      dark: this.mat({ color: 0x34322e }),
+      steel: this.mat({ color: 0x6e6c66 }),
+      rubber: this.mat({ color: 0x25231f }),
+      track: this.mat({ color: 0x45413b }),
+      glass: this.mat({ color: 0x9fd0e0, emissive: 0x1d3a44 }),
+      wood: this.mat({ color: 0x8a5f3a }),
+    };
 
     this.root.add(this.spin);
     this.spin.position.y = H / 2;
@@ -136,303 +156,33 @@ export class TankModel {
     this.inner.add(this.chassis);
     this.inner.add(this.body);
 
-    // --- kadłub dolny (między gąsienicami)
-    const lowerW = W - trackW * 2;
-    const lower = new THREE.Shape();
-    lower.moveTo(-L / 2 + 0.15, trackH * 0.35);
-    lower.lineTo(L / 2 - 0.5, trackH * 0.35);
-    lower.lineTo(L / 2 - 0.05, trackH);
-    lower.lineTo(-L / 2 + 0.05, trackH);
-    lower.closePath();
-    this.addExtrude(lower, lowerW, dark, this.body);
-
-    // --- kadłub górny ze skośnymi płytami (nad gąsienicami – błotniki)
-    const top = H;
-    const upper = new THREE.Shape();
-    const glacis = def.id === 'mamut' ? 1.6 : def.id === 'osa' ? 0.9 : 1.2;
-    upper.moveTo(-L / 2, trackH);
-    upper.lineTo(L / 2 + 0.05, trackH);
-    upper.lineTo(L / 2 + 0.05, trackH + 0.08);
-    upper.lineTo(L / 2 - glacis, top);
-    upper.lineTo(-L / 2 + 0.35, top);
-    upper.lineTo(-L / 2, top - 0.25);
-    upper.closePath();
-    this.addExtrude(upper, W, armor, this.body, 0.05);
-
-    // Pas w kolorze akcentu na przedniej płycie.
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.03, W * 0.98), accent);
-    const ga = Math.atan2(top - trackH - 0.08, glacis);
-    stripe.position.set(L / 2 - glacis * 0.45, trackH + (top - trackH) * 0.55 + 0.02, 0);
-    stripe.rotation.z = ga;
-    stripe.userData['noOutline'] = true;
-    this.body.add(stripe);
-
-    // Płyta silnika z kratkami.
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(L * 0.28, 0.05, W * 0.6), dark);
-    deck.position.set(-L / 2 + L * 0.2, top + 0.02, 0);
-    this.body.add(deck);
-    this.engineDeck.set(-L / 2 + L * 0.2, top + 0.1, 0);
-    for (let i = 0; i < 5; i++) {
-      const slat = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, W * 0.55), steel);
-      slat.position.set(-L / 2 + L * 0.1 + i * L * 0.045, top + 0.06, 0);
-      slat.userData['noOutline'] = true;
-      this.body.add(slat);
-    }
-    // Rury wydechowe.
-    const exGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.35, 10);
-    for (const side of [-1, 1]) {
-      const ex = new THREE.Mesh(exGeo, dark);
-      ex.rotation.z = Math.PI / 2;
-      ex.position.set(-L / 2 - 0.05, top - 0.3, side * W * 0.28);
-      this.body.add(ex);
-    }
-    this.exhaust.set(-L / 2 - 0.25, top - 0.3, 0);
-
-    // Skrzynki, liny holownicze, reflektory.
-    const boxGeo = new THREE.BoxGeometry(L * 0.18, 0.22, 0.3);
-    for (const side of [-1, 1]) {
-      const b = new THREE.Mesh(boxGeo, accent);
-      b.position.set(-L * 0.1, top + 0.11, side * (W / 2 - 0.2));
-      this.body.add(b);
-      const cable = new THREE.Mesh(
-        new THREE.TubeGeometry(
-          new THREE.CatmullRomCurve3([
-            new THREE.Vector3(L * 0.3, top + 0.03, side * (W / 2 - 0.08)),
-            new THREE.Vector3(L * 0.05, top + 0.05, side * (W / 2 - 0.05)),
-            new THREE.Vector3(-L * 0.25, top + 0.03, side * (W / 2 - 0.08)),
-          ]),
-          16, 0.025, 6, false,
-        ),
-        steel,
-      );
-      cable.userData['noOutline'] = true;
-      this.body.add(cable);
-      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.1, 12), this.mat({ color: 0xfff1b0, emissive: 0xffd060, emissiveIntensity: 0.6 }));
-      lamp.rotation.z = Math.PI / 2;
-      lamp.position.set(L / 2 - glacis * 0.55, (trackH + top) / 2 + 0.12, side * (W / 2 - 0.35));
-      lamp.userData['noOutline'] = true;
-      this.body.add(lamp);
-    }
-
-    // Nity na krawędziach płyt (instancing).
-    const rivetGeo = new THREE.SphereGeometry(0.03, 6, 4);
-    const rivetCount = Math.floor(L / 0.22) * 2;
-    const rivets = new THREE.InstancedMesh(rivetGeo, steel, rivetCount);
-    let ri = 0;
-    for (const side of [-1, 1]) {
-      for (let x = -L / 2 + 0.4; x < L / 2 - glacis && ri < rivetCount; x += 0.22) {
-        this.tmpM.makeTranslation(x, top + 0.005, side * (W / 2 - 0.03));
-        rivets.setMatrixAt(ri++, this.tmpM);
-      }
-    }
-    rivets.count = ri;
-    this.body.add(rivets);
-
-    // Fartuchy boczne (odpadają przy dużych uszkodzeniach).
-    if (st.skirts) {
-      const segs = Math.round(L / 1.0);
-      const segL = (L - 0.3) / segs;
-      const sh = trackH * (st.spacedArmor ? 0.75 : 0.55);
-      for (const side of [-1, 1]) {
-        for (let i = 0; i < segs; i++) {
-          const sk = new THREE.Mesh(new THREE.BoxGeometry(segL - 0.05, sh, 0.05), i % 2 ? armor : accent);
-          sk.position.set(-L / 2 + 0.15 + segL * (i + 0.5), trackH - sh / 2 + 0.02, side * (W / 2 + 0.04));
-          this.body.add(sk);
-          this.skirts.push(sk);
-        }
-      }
-    }
-
-    // --- gąsienice i koła
-    const linkGeo = new THREE.BoxGeometry(LINK_PITCH * 0.86, 0.07, trackW);
-    const count = Math.floor(this.trackLen / LINK_PITCH);
-    for (const side of [-1, 1]) {
-      const mesh = new THREE.InstancedMesh(linkGeo, trackMat, count);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.position.z = side * (W / 2 - trackW / 2);
-      this.chassis.add(mesh);
-      this.tracks.push({ mesh, side, offset: 0, count });
-      const z = side * (W / 2 - trackW / 2);
-      const rw = st.roadWheels;
-      const wr = this.trackR * 0.78;
-      const wheelGeo = new THREE.CylinderGeometry(wr, wr, trackW * 0.8, 18);
-      wheelGeo.rotateX(Math.PI / 2);
-      const hubGeo = new THREE.CylinderGeometry(wr * 0.4, wr * 0.4, trackW * 0.86, 8);
-      hubGeo.rotateX(Math.PI / 2);
-      for (let i = 0; i < rw; i++) {
-        const x = -this.trackA + 0.15 + ((2 * this.trackA - 0.3) * i) / (rw - 1);
-        const g = new THREE.Group();
-        const w = new THREE.Mesh(wheelGeo, rubber);
-        const hub = new THREE.Mesh(hubGeo, accent);
-        hub.userData['noOutline'] = true;
-        const spoke = new THREE.Mesh(new THREE.BoxGeometry(wr * 1.5, 0.06, trackW * 0.88), steel);
-        spoke.userData['noOutline'] = true;
-        g.add(w, hub, spoke);
-        g.position.set(x, wr + 0.04, z);
-        this.chassis.add(g);
-        this.wheels.push({ mesh: g, side, radius: wr, baseY: wr + 0.04, phase: i * 1.7 });
-      }
-      // Koło napędowe z zębami (tył) i napinające (przód).
-      const sr = this.trackR * 0.85;
-      for (const [x, teeth] of [[-this.trackA, true], [this.trackA, false]] as const) {
-        const g = new THREE.Group();
-        const disc = new THREE.Mesh(new THREE.CylinderGeometry(sr, sr, trackW * 0.7, 20), steel);
-        disc.rotation.x = Math.PI / 2;
-        g.add(disc);
-        if (teeth) {
-          for (let k = 0; k < 10; k++) {
-            const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, trackW * 0.5), dark);
-            const a = (k / 10) * Math.PI * 2;
-            tooth.position.set(Math.cos(a) * sr, Math.sin(a) * sr, 0);
-            tooth.rotation.z = a;
-            g.add(tooth);
-          }
-        }
-        g.position.set(x, this.trackR, z);
-        this.chassis.add(g);
-        this.wheels.push({ mesh: g, side, radius: sr, baseY: this.trackR, phase: 0 });
-      }
-    }
-
-    // --- wieża
-    this.turret.position.set(def.turretOffset, top, 0);
+    this.buildRunningGear(st.wheels);
+    if (st.skirts) this.buildSkirts();
+    this.turret.position.set(def.turretOffset, H, 0);
     this.body.add(this.turret);
-    const r = def.turretRadius;
-    const th = def.turretHeight;
-    const ts = new THREE.Shape();
-    if (st.turretShape === 'wedge') {
-      ts.moveTo(r * 1.0, -r * 0.5);
-      ts.lineTo(r * 1.0, r * 0.5);
-      ts.lineTo(r * 0.2, r * 0.95);
-      ts.lineTo(-r * 1.25, r * 0.85);
-      ts.lineTo(-r * 1.35, -r * 0.85);
-      ts.lineTo(r * 0.2, -r * 0.95);
-    } else if (st.turretShape === 'hex') {
-      ts.moveTo(r * 0.92, -r * 0.42);
-      ts.lineTo(r * 0.92, r * 0.42);
-      ts.lineTo(r * 0.25, r * 0.9);
-      ts.lineTo(-r * 0.9, r * 0.75);
-      ts.lineTo(-r * 1.0, -r * 0.75);
-      ts.lineTo(r * 0.25, -r * 0.9);
-    } else {
-      ts.moveTo(r * 0.9, -r * 0.55);
-      ts.lineTo(r * 0.9, r * 0.55);
-      ts.lineTo(-r * 0.8, r * 0.8);
-      ts.lineTo(-r * 0.9, -r * 0.8);
-    }
-    ts.closePath();
-    const tGeo = new THREE.ExtrudeGeometry(ts, {
-      depth: th * 0.9,
-      bevelEnabled: true,
-      bevelThickness: th * 0.1,
-      bevelSize: 0.08,
-      bevelSegments: 2,
-    });
-    tGeo.rotateX(-Math.PI / 2);
-    this.turret.add(new THREE.Mesh(tGeo, armor));
-    // Pas akcentu dookoła wieży.
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.93, r * 0.93, 0.1, 24), accent);
-    band.position.set(-r * 0.1, th * 0.25, 0);
-    band.scale.set(1.04, 1, 0.97);
-    band.userData['noOutline'] = true;
-    this.turret.add(band);
-    const ring = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.85, r * 0.9, 0.1, 24), dark);
-    ring.position.y = 0.03;
-    this.turret.add(ring);
-    // Właz, wieżyczka dowódcy, peryskopy, antena, kosz.
-    const hatch = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.25, r * 0.27, 0.08, 14), armor);
-    hatch.position.set(-r * 0.3, th + 0.04, r * 0.3);
-    this.turret.add(hatch);
-    const cupola = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.22, r * 0.26, 0.22, 10), armor);
-    cupola.position.set(-r * 0.35, th + 0.11, -r * 0.35);
-    this.turret.add(cupola);
-    for (let i = 0; i < 5; i++) {
-      const p = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.08), this.mat({ color: 0x9ad8ff, emissive: 0x2a6080 }));
-      const a = (i / 5) * Math.PI * 2;
-      p.position.set(-r * 0.35 + Math.cos(a) * r * 0.22, th + 0.2, -r * 0.35 + Math.sin(a) * r * 0.22);
-      this.turret.add(p);
-    }
-    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 2.2, 4), dark);
-    ant.position.set(-r * 0.95, th + 1.1, r * 0.55);
-    ant.userData['noOutline'] = true;
-    this.turret.add(ant);
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.22), this.mat({ color: accentCol, side: THREE.DoubleSide }));
-    flag.position.set(-r * 0.95 - 0.2, th + 2.05, r * 0.55);
-    flag.userData['noOutline'] = true;
-    this.turret.add(flag);
-    const bustle = new THREE.Mesh(new THREE.BoxGeometry(r * 0.5, th * 0.45, r * 1.3), dark);
-    bustle.position.set(-r * 1.2, th * 0.45, 0);
-    this.turret.add(bustle);
-    const numTex = numberTexture(st.number, st.numberColor);
-    const numMat = new THREE.MeshBasicMaterial({ map: numTex, transparent: true, depthWrite: false });
-    for (const side of [-1, 1]) {
-      const plane = new THREE.Mesh(new THREE.PlaneGeometry(r * 0.9, r * 0.45), numMat);
-      plane.position.set(-r * 0.35, th * 0.55, side * (r * 0.83 + 0.11));
-      plane.rotation.y = side > 0 ? 0 : Math.PI;
-      this.turret.add(plane);
-    }
-
-    // --- jarzmo na czopach z przodu wieży (zgodnie z geometrią symulacji)
-    const trunnion = r * 0.8;
-    this.mantlet.position.set(trunnion, th / 2, 0);
+    this.mantlet.position.set(def.turretRadius * 0.8, def.turretHeight / 2, 0);
     this.turret.add(this.mantlet);
-    const twin = def.twinBarrels;
-    // Osłona jarzma – zaokrąglony blok obracający się z lufą, zasłania otwór w wieży.
-    const shieldW = twin ? r * 1.25 : r * 0.85;
-    const shieldGeo = new THREE.CylinderGeometry(th * 0.42, th * 0.42, shieldW, 16);
-    shieldGeo.rotateX(Math.PI / 2);
-    const shield = new THREE.Mesh(shieldGeo, armor);
-    shield.position.x = -0.02;
-    this.mantlet.add(shield);
-    const len = def.barrelLength;
-    const br = def.barrelRadius * 0.6;
-    const start = r * 0.2;
-    const ext = def.extRange;
-    const barrels = twin ? [-r * 0.35, r * 0.35] : [0];
-    for (const z of barrels) {
-      // Kołyska (stała względem jarzma) – w niej przesuwa się lufa, więc nigdy nie odstaje.
-      const cradleLen = start + ext + 0.35;
-      const cradle = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.65, br * 1.8, cradleLen, 14), armor);
-      cradle.rotation.z = -Math.PI / 2;
-      cradle.position.set(cradleLen / 2, 0, z);
-      this.mantlet.add(cradle);
-      const collar = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.9, br * 1.9, 0.1, 14), accent);
-      collar.rotation.z = -Math.PI / 2;
-      collar.position.set(cradleLen - 0.05, 0, z);
-      collar.userData['noOutline'] = true;
-      this.mantlet.add(collar);
-      // Lufa: od wnętrza kołyski do wylotu (wylot = start + długość, jak w symulacji).
-      const tubeLen = len + 0.3;
-      const tube = new THREE.Mesh(new THREE.CylinderGeometry(br * 0.85, br, tubeLen, 14), steel);
-      tube.rotation.z = -Math.PI / 2;
-      tube.position.set(start + len - tubeLen / 2, 0, z);
-      this.barrel.add(tube);
-      if (st.fumeExtractor) {
-        const fe = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.6, br * 1.6, len * 0.12, 14), dark);
-        fe.rotation.z = -Math.PI / 2;
-        fe.position.set(start + len * 0.55, 0, z);
-        this.barrel.add(fe);
-      }
-      if (st.muzzleBrake !== 'none') {
-        const s = st.muzzleBrake === 'big' ? 1.0 : 0.75;
-        const mb = new THREE.Mesh(new THREE.BoxGeometry(len * 0.07, br * 2.6 * s, br * 3.2 * s), dark);
-        mb.position.set(start + len - len * 0.03, 0, z);
-        this.barrel.add(mb);
-        const mb2 = mb.clone();
-        mb2.position.x -= len * 0.06;
-        this.barrel.add(mb2);
-      } else {
-        const jacket = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.4, br * 1.4, len * 0.45, 8), dark);
-        jacket.rotation.z = -Math.PI / 2;
-        jacket.position.set(start + len * 0.5, 0, z);
-        this.barrel.add(jacket);
-      }
-    }
     this.mantlet.add(this.barrel);
-    this.tipLocal = new THREE.Vector3(start + len, 0, 0);
-    this.midLocal = new THREE.Vector3(start + len * 0.35, 0, 0);
 
-    addOutlines(this.inner, OUTLINE);
+    switch (def.id) {
+      case 'mamut':
+        this.buildMamut();
+        break;
+      case 'grom':
+        this.buildGrom();
+        break;
+      case 'osa':
+        this.buildOsa();
+        break;
+      default:
+        this.buildKobra();
+        break;
+    }
+    this.tipLocal = new THREE.Vector3(def.turretRadius * 0.2 + def.barrelLength, 0, 0);
+    this.midLocal = new THREE.Vector3(def.turretRadius * 0.2 + def.barrelLength * 0.35, 0, 0);
+    this.addNumbers(st);
+
+    addOutlines(this.inner, OUTLINE, 0.14);
     this.root.traverse((o) => {
       if (o instanceof THREE.Mesh && !o.userData['noOutline']) {
         o.castShadow = true;
@@ -448,17 +198,334 @@ export class TankModel {
     return m;
   }
 
-  private addExtrude(shape: THREE.Shape, depth: number, mat: THREE.Material, parent: THREE.Object3D, bevel = 0): void {
-    const g = new THREE.ExtrudeGeometry(shape, {
-      depth: depth - bevel * 2,
-      bevelEnabled: bevel > 0,
-      bevelThickness: bevel,
-      bevelSize: bevel,
-      bevelSegments: 1,
-    });
-    g.translate(0, 0, -(depth - bevel * 2) / 2);
-    parent.add(new THREE.Mesh(g, mat));
+  private add(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0, noOutline = false): THREE.Mesh {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    if (noOutline) mesh.userData['noOutline'] = true;
+    parent.add(mesh);
+    return mesh;
   }
+
+  private cyl(r0: number, r1: number, len: number, seg = 12, axis: 'x' | 'y' | 'z' = 'y'): THREE.BufferGeometry {
+    const g = new THREE.CylinderGeometry(r1, r0, len, seg);
+    if (axis === 'x') g.rotateZ(-Math.PI / 2);
+    if (axis === 'z') g.rotateX(Math.PI / 2);
+    return g;
+  }
+
+  // ------------------------------------------------------------ wspólne elementy
+
+  /** Dolny kadłub między gąsienicami (wanna). */
+  private lowerHull(noseLen: number): void {
+    const L = this.def.hullLength;
+    const w = this.def.hullWidth / 2 - this.trackW + 0.02;
+    const th = this.trackH;
+    this.add(this.body, loft([
+      { x: -L / 2 + 0.1, y0: th * 0.45, y1: th, w0: w, w1: w },
+      { x: L / 2 - noseLen, y0: th * 0.3, y1: th, w0: w, w1: w },
+      { x: L / 2 - 0.05, y0: th * 0.85, y1: th, w0: w, w1: w },
+    ]), this.m.dark);
+  }
+
+  private buildRunningGear(ws: WheelStyle): void {
+    const W = this.def.hullWidth;
+    const linkGeo = new THREE.BoxGeometry(LINK_PITCH * 0.86, 0.07, this.trackW);
+    const count = Math.floor(this.trackLen / LINK_PITCH);
+    const wr = this.trackR * 0.8 * ws.size;
+    for (const side of [-1, 1]) {
+      const z = side * (W / 2 - this.trackW / 2);
+      const mesh = new THREE.InstancedMesh(linkGeo, this.m.track, count);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.position.z = z;
+      this.chassis.add(mesh);
+      this.tracks.push({ mesh, side, offset: 0, count });
+      const span = 2 * this.trackA - 0.25;
+      for (let i = 0; i < ws.count; i++) {
+        const x = -this.trackA + 0.12 + (span * i) / (ws.count - 1);
+        // Zachodzące koła: co drugie bliżej burty.
+        const dz = ws.interleave ? (i % 2 ? -0.12 : 0.12) * side : 0;
+        const g = new THREE.Group();
+        g.add(new THREE.Mesh(this.cyl(wr, wr, this.trackW * (ws.interleave ? 0.38 : 0.78), 16, 'z'), this.m.rubber));
+        const hub = new THREE.Mesh(this.cyl(wr * 0.62, wr * 0.62, this.trackW * (ws.interleave ? 0.42 : 0.82), 10, 'z'), this.m.armor);
+        hub.userData['noOutline'] = true;
+        g.add(hub);
+        const cap = new THREE.Mesh(this.cyl(wr * 0.22, wr * 0.22, this.trackW * 0.9, 6, 'z'), this.m.steel);
+        cap.userData['noOutline'] = true;
+        g.add(cap);
+        g.position.set(x, wr + 0.04, z + dz);
+        this.chassis.add(g);
+        this.wheels.push({ mesh: g, side, radius: wr, baseY: wr + 0.04, phase: i * 1.7 });
+      }
+      for (let i = 0; i < ws.returnRollers; i++) {
+        const rr = this.trackR * 0.25;
+        const g = new THREE.Group();
+        g.add(new THREE.Mesh(this.cyl(rr, rr, this.trackW * 0.6, 8, 'z'), this.m.steel));
+        g.position.set(-this.trackA * 0.5 + i * this.trackA, this.trackR * 2 - rr - 0.05, z);
+        this.chassis.add(g);
+        this.wheels.push({ mesh: g, side, radius: rr, baseY: g.position.y, phase: 0 });
+      }
+      // Koło napędowe z zębami (tył) i napinające (przód).
+      const sr = this.trackR * 0.85;
+      for (const [x, teeth] of [[-this.trackA, true], [this.trackA, false]] as const) {
+        const g = new THREE.Group();
+        g.add(new THREE.Mesh(this.cyl(sr, sr, this.trackW * 0.7, 14, 'z'), this.m.steel));
+        if (teeth) {
+          for (let k = 0; k < 10; k++) {
+            const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, this.trackW * 0.5), this.m.dark);
+            const a = (k / 10) * Math.PI * 2;
+            tooth.position.set(Math.cos(a) * sr, Math.sin(a) * sr, 0);
+            tooth.rotation.z = a;
+            tooth.userData['noOutline'] = true;
+            g.add(tooth);
+          }
+        }
+        g.position.set(x, this.trackR, z);
+        this.chassis.add(g);
+        this.wheels.push({ mesh: g, side, radius: sr, baseY: this.trackR, phase: 0 });
+      }
+    }
+  }
+
+  /** Fartuchy (ekrany) nad gąsienicami – odpadają przy dużych uszkodzeniach. */
+  private buildSkirts(): void {
+    const L = this.def.hullLength;
+    const W = this.def.hullWidth;
+    const segs = Math.round(L / 0.95);
+    const segL = (L - 0.4) / segs;
+    const sh = this.trackH * 0.7;
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < segs; i++) {
+        const sk = new THREE.Mesh(new THREE.BoxGeometry(segL - 0.05, sh, 0.05), this.m.armor);
+        sk.position.set(-L / 2 + 0.2 + segL * (i + 0.5), this.trackH - sh / 2 + 0.05, side * (W / 2 + 0.06));
+        sk.rotation.x = side * 0.06;
+        this.body.add(sk);
+        this.skirts.push(sk);
+      }
+    }
+  }
+
+  /** Lufa w kołysce: kołyska jest stała względem jarzma, lufa wysuwa się z niej teleskopowo. */
+  private buildGun(opts: { z: number; br: number; brake: 'double' | 'single' | 'none'; evacuator: number | null; jacket?: boolean }): void {
+    const def = this.def;
+    const len = def.barrelLength;
+    const start = def.turretRadius * 0.2;
+    const cradleLen = start + def.extRange + 0.35;
+    const { z, br } = opts;
+    this.add(this.mantlet, this.cyl(br * 1.85, br * 1.6, cradleLen, 12, 'x'), this.m.armor, cradleLen / 2, 0, z);
+    this.add(this.mantlet, this.cyl(br * 1.95, br * 1.95, 0.1, 12, 'x'), this.m.dark, cradleLen - 0.05, 0, z, true);
+    const tubeLen = len + 0.3;
+    this.add(this.barrel, this.cyl(br, br * 0.85, tubeLen, 12, 'x'), this.m.steel, start + len - tubeLen / 2, 0, z);
+    if (opts.evacuator !== null) {
+      this.add(this.barrel, this.cyl(br * 1.55, br * 1.55, len * 0.12, 12, 'x'), this.m.armor, start + len * opts.evacuator, 0, z);
+    }
+    if (opts.jacket) {
+      this.add(this.barrel, this.cyl(br * 1.5, br * 1.5, len * 0.5, 8, 'x'), this.m.dark, start + len * 0.42, 0, z);
+    }
+    if (opts.brake === 'double') {
+      this.add(this.barrel, this.cyl(br * 1.6, br * 1.6, len * 0.05, 10, 'x'), this.m.dark, start + len - len * 0.025, 0, z);
+      this.add(this.barrel, this.cyl(br * 1.6, br * 1.6, len * 0.05, 10, 'x'), this.m.dark, start + len - len * 0.1, 0, z);
+      this.add(this.barrel, this.cyl(br * 1.15, br * 1.15, len * 0.08, 10, 'x'), this.m.steel, start + len - len * 0.065, 0, z, true);
+    } else if (opts.brake === 'single') {
+      this.add(this.barrel, new THREE.BoxGeometry(len * 0.07, br * 2.4, br * 3), this.m.dark, start + len - len * 0.035, 0, z);
+    }
+  }
+
+  private cupola(parent: THREE.Object3D, x: number, y: number, z: number, r: number): void {
+    this.add(parent, this.cyl(r, r * 0.9, 0.22, 10), this.m.armor, x, y + 0.11, z);
+    this.add(parent, this.cyl(r * 0.85, r * 0.6, 0.08, 10), this.m.armor, x, y + 0.26, z);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      this.add(parent, new THREE.BoxGeometry(0.06, 0.06, 0.07), this.m.glass, x + Math.cos(a) * r * 0.95, y + 0.14, z + Math.sin(a) * r * 0.95, true);
+    }
+  }
+
+  private exhausts(x: number, y: number, spread: number, vertical: boolean): void {
+    for (const s of [-1, 1]) {
+      if (vertical) this.add(this.body, this.cyl(0.09, 0.11, 0.45, 8), this.m.dark, x, y + 0.2, s * spread);
+      else this.add(this.body, this.cyl(0.08, 0.1, 0.35, 8, 'x'), this.m.dark, x, y, s * spread);
+    }
+    this.exhaust.set(x - 0.15, y + (vertical ? 0.45 : 0), 0);
+  }
+
+  private addNumbers(st: TankStyle): void {
+    const tex = numberTexture(st.number, st.numberColor);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+    const def = this.def;
+    const casemate = def.casemate === true;
+    for (const side of [-1, 1]) {
+      const w = casemate ? 0.9 : def.turretRadius * 0.9;
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.5), mat);
+      plane.userData['noOutline'] = true;
+      if (casemate) {
+        plane.position.set(-0.6, def.hullHeight + 0.25, side * (def.hullWidth / 2 - 0.32));
+        plane.rotation.set(-side * 0.5, side > 0 ? 0 : Math.PI, 0);
+        this.body.add(plane);
+      } else {
+        plane.position.set(-def.turretRadius * 0.35, def.turretHeight * 0.55, side * (def.turretRadius * 0.86 + 0.06));
+        plane.rotation.y = side > 0 ? 0 : Math.PI;
+        this.turret.add(plane);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ MAMUT – ciężki, kanciasty
+
+  private buildMamut(): void {
+    const d = this.def;
+    const L = d.hullLength;
+    const W = d.hullWidth;
+    const H = d.hullHeight;
+    const th = this.trackH;
+    this.lowerHull(1.3);
+    // Górny kadłub: długa, mocno pochylona płyta czołowa i burty pochylone do środka.
+    this.add(this.body, loft([
+      { x: -L / 2, y0: th, y1: H - 0.18, w0: W / 2, w1: W / 2 - 0.22 },
+      { x: -L / 2 + 0.25, y0: th, y1: H, w0: W / 2, w1: W / 2 - 0.28 },
+      { x: L / 2 - 1.75, y0: th, y1: H, w0: W / 2, w1: W / 2 - 0.28 },
+      { x: L / 2 + 0.05, y0: th - 0.12, y1: th + 0.12, w0: W / 2 - 0.12, w1: W / 2 - 0.2 },
+    ]), this.m.armor);
+    // Płyta silnika, wloty powietrza, wydechy pionowe, zapasowe ogniwa na płycie czołowej.
+    this.add(this.body, box(-L / 2 + 0.35, -L / 2 + 1.6, H - 0.02, H + 0.06, W / 2 - 0.55), this.m.dark);
+    for (let i = 0; i < 4; i++) this.add(this.body, new THREE.BoxGeometry(0.06, 0.05, W * 0.45), this.m.steel, -L / 2 + 0.5 + i * 0.3, H + 0.08, 0, true);
+    this.exhausts(-L / 2 + 0.05, H - 0.2, 0.55, true);
+    for (let i = 0; i < 3; i++) {
+      const link = this.add(this.body, new THREE.BoxGeometry(0.2, 0.05, W * 0.55), this.m.track, L / 2 - 1.1 + i * 0.28, th + 0.62 - i * 0.18, 0, true);
+      link.rotation.z = -0.55;
+    }
+    this.engineDeck.set(-L / 2 + 1.0, H + 0.1, 0);
+    // Wieża: długa, z pochylonymi policzkami i płaskimi burtami (styl ciężkich czołgów z lat 40.).
+    const r = d.turretRadius;
+    const tt = d.turretHeight;
+    this.add(this.turret, loft([
+      { x: -r * 1.5, y0: 0.08, y1: tt * 0.92, w0: r * 0.78, w1: r * 0.62 },
+      { x: -r * 1.25, y0: 0, y1: tt, w0: r * 0.92, w1: r * 0.7 },
+      { x: r * 0.3, y0: 0, y1: tt, w0: r * 0.95, w1: r * 0.72 },
+      { x: r * 0.78, y0: 0.06, y1: tt * 0.82, w0: r * 0.52, w1: r * 0.38 },
+    ]), this.m.armor);
+    this.add(this.turret, this.cyl(r * 0.9, r * 0.92, 0.1, 16), this.m.dark, 0, 0.03, 0);
+    this.cupola(this.turret, -r * 0.55, tt, r * 0.4, r * 0.24);
+    this.add(this.turret, new THREE.BoxGeometry(r * 0.5, 0.06, r * 0.4), this.m.armor, -r * 0.4, tt + 0.03, -r * 0.35);
+    // Zapasowe ogniwa gąsienic na burtach wieży.
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 4; i++) {
+        this.add(this.turret, new THREE.BoxGeometry(0.17, 0.07, 0.42), this.m.track, -r * 0.8 + i * 0.22, tt * 0.45, s * r * 0.9, true).rotation.x = Math.PI / 2;
+      }
+    }
+    // Jarzmo „świński łeb” – zaokrąglony stożek.
+    this.add(this.mantlet, this.cyl(tt * 0.42, tt * 0.22, 0.55, 12, 'x'), this.m.armor, 0.05, 0, 0);
+    this.buildGun({ z: 0, br: d.barrelRadius * 0.55, brake: 'double', evacuator: null });
+  }
+
+  // ------------------------------------------------------------ GROM – średni z kopułą
+
+  private buildGrom(): void {
+    const d = this.def;
+    const L = d.hullLength;
+    const W = d.hullWidth;
+    const H = d.hullHeight;
+    const th = this.trackH;
+    this.lowerHull(1.0);
+    this.add(this.body, loft([
+      { x: -L / 2, y0: th, y1: H - 0.22, w0: W / 2, w1: W / 2 - 0.08 },
+      { x: -L / 2 + 0.35, y0: th, y1: H, w0: W / 2, w1: W / 2 - 0.1 },
+      { x: L / 2 - 1.15, y0: th, y1: H, w0: W / 2, w1: W / 2 - 0.1 },
+      { x: L / 2 + 0.05, y0: th - 0.15, y1: th + 0.08, w0: W / 2 - 0.1, w1: W / 2 - 0.15 },
+    ]), this.m.armor);
+    // Beczki z paliwem na tylnych błotnikach, bal do wyciągania z błota, reflektor.
+    for (const x of [-L / 2 + 0.55, -L / 2 + 1.3]) {
+      this.add(this.body, this.cyl(0.22, 0.22, 0.65, 10, 'x'), this.m.dark, x, H + 0.05, -(W / 2 - 0.25));
+    }
+    this.add(this.body, this.cyl(0.13, 0.13, W * 0.9, 8, 'z'), this.m.wood, -L / 2 + 0.05, H + 0.05, 0);
+    this.add(this.body, this.cyl(0.11, 0.11, 0.12, 10, 'x'), this.m.glass, L / 2 - 0.85, H + 0.05, -W / 2 + 0.35, true);
+    for (let i = 0; i < 5; i++) this.add(this.body, new THREE.BoxGeometry(0.05, 0.04, W * 0.5), this.m.steel, -L / 2 + 0.6 + i * 0.22, H + 0.03, 0.15, true);
+    this.exhausts(-L / 2 - 0.02, H - 0.35, 0.65, false);
+    this.engineDeck.set(-L / 2 + 0.9, H + 0.1, 0);
+    // Kopułowa, odlewana wieża.
+    const r = d.turretRadius;
+    const tt = d.turretHeight;
+    const dome = new THREE.SphereGeometry(r, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+    dome.scale(1.08, (tt * 1.25) / r, 0.98);
+    this.add(this.turret, dome, this.m.armor, -r * 0.08, 0, 0);
+    this.add(this.turret, this.cyl(r * 0.98, r * 1.02, 0.12, 16), this.m.armor, -r * 0.08, 0.04, 0);
+    this.cupola(this.turret, -r * 0.3, tt * 1.05, -r * 0.35, r * 0.22);
+    this.add(this.turret, this.cyl(r * 0.18, r * 0.2, 0.08, 10), this.m.armor, -r * 0.25, tt * 1.15, r * 0.35);
+    this.add(this.turret, this.cyl(0.015, 0.02, 2.0, 4), this.m.dark, -r * 0.7, tt + 1.0, r * 0.6, true);
+    // Odlewane jarzmo i lufa z eżektorem przy wylocie.
+    this.add(this.mantlet, new THREE.SphereGeometry(tt * 0.42, 8, 6), this.m.armor, -0.02, 0, 0);
+    this.buildGun({ z: 0, br: d.barrelRadius * 0.55, brake: 'none', evacuator: 0.82 });
+  }
+
+  // ------------------------------------------------------------ OSA – lekki, wieża z tyłu
+
+  private buildOsa(): void {
+    const d = this.def;
+    const L = d.hullLength;
+    const W = d.hullWidth;
+    const H = d.hullHeight;
+    const th = this.trackH;
+    this.lowerHull(0.9);
+    // Klinowy przód (silnik z przodu, wieża z tyłu).
+    this.add(this.body, loft([
+      { x: -L / 2, y0: th, y1: H, w0: W / 2, w1: W / 2 - 0.08 },
+      { x: L / 2 - 1.1, y0: th, y1: H, w0: W / 2, w1: W / 2 - 0.08 },
+      { x: L / 2 - 0.55, y0: th, y1: H - 0.12, w0: W / 2, w1: W / 2 - 0.15 },
+      { x: L / 2 + 0.08, y0: th * 0.6, y1: th + 0.05, w0: W / 2 - 0.2, w1: W / 2 - 0.3 },
+    ]), this.m.armor);
+    // Kratka silnika z przodu, właz kierowcy, reflektory na klinie.
+    this.add(this.body, box(L / 2 - 1.5, L / 2 - 0.75, H - 0.02, H + 0.03, W / 2 - 0.45), this.m.dark);
+    for (let i = 0; i < 4; i++) this.add(this.body, new THREE.BoxGeometry(0.05, 0.04, W * 0.4), this.m.steel, L / 2 - 1.4 + i * 0.18, H + 0.05, 0, true);
+    for (const s of [-1, 1]) this.add(this.body, this.cyl(0.08, 0.08, 0.1, 10, 'x'), this.m.glass, L / 2 - 0.3, th + 0.18, s * (W / 2 - 0.4), true);
+    this.exhausts(L / 2 - 1.3, H - 0.2, W / 2 - 0.05, false);
+    this.engineDeck.set(L / 2 - 1.1, H + 0.1, 0);
+    // Wieża oscylacyjna: niski kołnierz + górna część z długim koszem z tyłu.
+    const r = d.turretRadius;
+    const tt = d.turretHeight;
+    this.add(this.turret, this.cyl(r * 0.85, r * 0.92, tt * 0.35, 12), this.m.armor, 0, tt * 0.17, 0);
+    this.add(this.turret, loft([
+      { x: -r * 2.0, y0: tt * 0.4, y1: tt * 0.95, w0: r * 0.55, w1: r * 0.45 },
+      { x: -r * 0.6, y0: tt * 0.25, y1: tt * 1.05, w0: r * 0.88, w1: r * 0.7 },
+      { x: r * 0.55, y0: tt * 0.25, y1: tt * 0.95, w0: r * 0.85, w1: r * 0.55 },
+      { x: r * 0.85, y0: tt * 0.35, y1: tt * 0.75, w0: r * 0.6, w1: r * 0.4 },
+    ]), this.m.armor);
+    this.cupola(this.turret, -r * 0.3, tt * 1.05, r * 0.35, r * 0.2);
+    this.add(this.turret, this.cyl(0.012, 0.016, 1.6, 4), this.m.dark, -r * 1.7, tt + 0.8, -r * 0.3, true);
+    // Bliźniacze karabiny z perforowanymi osłonami.
+    this.add(this.mantlet, new THREE.BoxGeometry(0.35, tt * 0.55, r * 1.25), this.m.armor, 0.05, 0, 0);
+    for (const z of [-r * 0.35, r * 0.35]) this.buildGun({ z, br: d.barrelRadius * 0.6, brake: 'none', evacuator: null, jacket: true });
+  }
+
+  // ------------------------------------------------------------ KOBRA – niszczyciel bez wieży
+
+  private buildKobra(): void {
+    const d = this.def;
+    const L = d.hullLength;
+    const W = d.hullWidth;
+    const H = d.hullHeight;
+    const th = this.trackH;
+    const roof = H + d.turretHeight;
+    this.lowerHull(1.2);
+    // Kazamata: jedna bryła od nosa po dach, mocno pochylone burty i długa płyta czołowa.
+    this.add(this.body, loft([
+      { x: -L / 2, y0: th, y1: roof - 0.35, w0: W / 2, w1: W / 2 - 0.42 },
+      { x: -L / 2 + 0.45, y0: th, y1: roof, w0: W / 2, w1: W / 2 - 0.5 },
+      { x: 0.55, y0: th, y1: roof, w0: W / 2, w1: W / 2 - 0.5 },
+      { x: L / 2 + 0.05, y0: th - 0.12, y1: th + 0.1, w0: W / 2 - 0.12, w1: W / 2 - 0.3 },
+    ]), this.m.armor);
+    // Pasy kamuflażu „zasadzka”, peryskopy, właz, wydechy, lina, skrzynka.
+    for (const s of [-1, 1]) this.add(this.body, new THREE.BoxGeometry(L * 0.5, 0.05, 0.06), this.m.accent, -0.6, H + 0.25, s * (W / 2 - 0.28), true).rotation.x = s * 0.5;
+    this.cupola(this.body, -0.9, roof - 0.04, 0.5, 0.22);
+    this.add(this.body, box(-1.6, -1.0, roof - 0.04, roof + 0.04, 0.35), this.m.armor);
+    for (let i = 0; i < 3; i++) this.add(this.body, new THREE.BoxGeometry(0.08, 0.07, 0.14), this.m.glass, 0.35, roof + 0.02, -0.45 + i * 0.3, true);
+    this.exhausts(-L / 2 - 0.02, H - 0.25, 0.6, true);
+    this.add(this.body, new THREE.BoxGeometry(0.9, 0.22, 0.3), this.m.wood, -L / 2 + 0.9, roof - 0.15, -W / 2 + 0.45);
+    this.engineDeck.set(-L / 2 + 0.8, roof, 0);
+    // Jarzmo osadzone w płycie czołowej – „świński łeb”.
+    const tt = d.turretHeight;
+    this.add(this.mantlet, this.cyl(tt * 0.5, tt * 0.26, 0.6, 12, 'x'), this.m.armor, 0.0, 0, 0);
+    this.buildGun({ z: 0, br: d.barrelRadius * 0.55, brake: 'double', evacuator: null });
+  }
+
+  // ------------------------------------------------------------ animacja
 
   /** Pozycja ogniwa na ścieżce gąsienicy (stadion w przekroju bocznym). */
   private trackPoint(s: number, out: THREE.Vector3): number {

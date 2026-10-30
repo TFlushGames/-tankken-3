@@ -75,8 +75,8 @@ describe('rozgrywka', () => {
   });
 
   it('każdy czołg przeskakuje nad każdym z bliska', () => {
-    for (let t1 = 0; t1 < 3; t1++) {
-      for (let t2 = 0; t2 < 3; t2++) {
+    for (let t1 = 0; t1 < 4; t1++) {
+      for (let t2 = 0; t2 < 4; t2++) {
         const s = fight(t1, t2);
         run(s, 90, IN_RIGHT);
         run(s, 70, IN_UP | IN_RIGHT);

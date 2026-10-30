@@ -7,7 +7,7 @@ let gradient: THREE.DataTexture | null = null;
 /** Mapa progów światła – 4 twarde stopnie. */
 export function toonGradient(): THREE.DataTexture {
   if (gradient) return gradient;
-  const steps = new Uint8Array([70, 140, 205, 255]);
+  const steps = new Uint8Array([120, 175, 225, 255]);
   const data = new Uint8Array(steps.length * 4);
   steps.forEach((v, i) => data.set([v, v, v, 255], i * 4));
   gradient = new THREE.DataTexture(data, steps.length, 1, THREE.RGBAFormat);

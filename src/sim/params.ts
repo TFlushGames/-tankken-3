@@ -16,6 +16,11 @@ export const REF_MASS = 35000; // kg
 /** Przyspieszenie kątowe kadłuba (°/s²) dla masy referencyjnej 35 t. */
 export const BODY_ACCEL = 6000;
 export const BODY_MAX_VEL = 900;
+/** Salto kadłuba (°/s, °/s²) i młynek na lufie – dla 35 t. */
+export const FLIP_MAX_VEL = 560;
+export const FLIP_ACCEL = 9000;
+export const SPIN_MAX_VEL = 2400;
+export const SPIN_ACCEL = 30000;
 /** Globalne skrócenie faz „przytrzymania” – tempo gry. */
 export const HOLD_SCALE = 0.5;
 
@@ -37,6 +42,12 @@ export interface CompiledKey {
   timeout: number;
   untilLanding: boolean;
   slam: boolean;
+  bodyPitch: number | null;
+  hullSpin: number | null;
+  plant: boolean;
+  fire: 'shot' | 'blast' | null;
+  recoil: number;
+  leap: number | null;
 }
 
 export interface CompiledMove {
@@ -77,6 +88,10 @@ export interface TankParams {
   liftAccel: number;
   pivotMaxVel: number;
   pivotAccel: number;
+  flipMaxVel: number;
+  flipAccel: number;
+  spinMaxVel: number;
+  spinAccel: number;
   barrelLength: number;
   barrelRadius: number;
   jumpVel: number;
@@ -120,9 +135,16 @@ function compileMove(def: MoveDef, index: number, tank: TankDef, kickScale: numb
       vyImpulse: mm(perFrame(k.vyImpulse ?? 0)),
       active: k.active ?? false,
       hold: Math.round((k.hold ?? 0) * inertia * HOLD_SCALE),
-      timeout: k.timeout ?? 30,
+      // Limit czasu fazy to tylko zabezpieczenie – cięższy czołg potrzebuje go więcej.
+      timeout: Math.round((k.timeout ?? 30) * inertia * 2),
       untilLanding: k.untilLanding ?? false,
       slam: k.slam ?? k.active ?? false,
+      bodyPitch: k.bodyPitch === undefined ? null : cd(k.bodyPitch),
+      hullSpin: k.hullSpin === undefined ? null : cd(k.hullSpin),
+      plant: k.plant ?? false,
+      leap: k.leap === undefined ? null : mm(k.leap),
+      fire: k.fire ?? null,
+      recoil: Math.round((mm(perFrame(k.recoil ?? 0)) * kickScale) / 1000),
     })),
   };
 }
@@ -156,6 +178,11 @@ function compileTank(def: TankDef, index: number): TankParams {
     liftAccel: bodyAccel,
     pivotMaxVel: Math.round(bodyVel * 1.6),
     pivotAccel: Math.round(bodyAccel * 3),
+    // Akrobacje całego kadłuba (salto, młynek) – też zależne od masy.
+    flipMaxVel: Math.round(cd(perFrame(FLIP_MAX_VEL)) * Math.sqrt(massRatio)),
+    flipAccel: Math.max(1, Math.round(cd(perFrame2(FLIP_ACCEL)) * massRatio)),
+    spinMaxVel: Math.round(cd(perFrame(SPIN_MAX_VEL)) * Math.sqrt(massRatio)),
+    spinAccel: Math.max(1, Math.round(cd(perFrame2(SPIN_ACCEL)) * massRatio)),
     barrelLength: mm(def.barrelLength),
     barrelRadius: mm(def.barrelRadius),
     jumpVel,

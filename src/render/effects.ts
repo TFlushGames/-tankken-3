@@ -430,3 +430,107 @@ export class ComicText {
     this.layer.replaceChildren();
   }
 }
+
+interface Puff {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  life: number;
+  max: number;
+  size: number;
+  color: THREE.Color;
+}
+
+/** Stylizowane, „puchate” obłoczki kurzu i dymu (instancje brył low-poly z cieniowaniem toon). */
+export class PuffSystem {
+  readonly mesh: THREE.InstancedMesh;
+  private readonly cap = 400;
+  private items: Puff[] = [];
+  private readonly m = new THREE.Matrix4();
+  private readonly q = new THREE.Quaternion();
+  private readonly s = new THREE.Vector3();
+  density = 1;
+
+  constructor(material: THREE.Material) {
+    this.mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), material, this.cap);
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.frustumCulled = false;
+    this.mesh.count = 0;
+  }
+
+  spawn(pos: THREE.Vector3, vel: THREE.Vector3, size: number, life: number, color: THREE.Color): void {
+    if (this.items.length >= this.cap) this.items.shift();
+    this.items.push({ pos: pos.clone(), vel: vel.clone(), life, max: life, size, color: color.clone() });
+  }
+
+  /** Pierścień obłoczków rozchodzących się po ziemi (lądowanie, wybuch). */
+  ring(center: THREE.Vector3, n: number, radius: number, speed: number, size: number, color: THREE.Color): void {
+    const count = Math.max(3, Math.round(n * this.density));
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const p = new THREE.Vector3(center.x + Math.cos(a) * radius, Math.max(0.2, center.y), center.z + Math.sin(a) * radius);
+      const v = new THREE.Vector3(Math.cos(a) * speed, 0.6 + Math.random(), Math.sin(a) * speed);
+      this.spawn(p, v, size * (0.7 + Math.random() * 0.6), 0.55 + Math.random() * 0.35, color);
+    }
+  }
+
+  update(dt: number): void {
+    let n = 0;
+    for (const p of this.items) {
+      p.life -= dt;
+      if (p.life <= 0) continue;
+      p.vel.multiplyScalar(Math.max(0, 1 - dt * 3.5));
+      p.vel.y += dt * 0.6;
+      p.pos.addScaledVector(p.vel, dt);
+      const k = 1 - p.life / p.max;
+      // Szybko rośnie, potem się kurczy – komiksowy obłoczek.
+      const sc = p.size * Math.sin(Math.min(1, k * 1.15) * Math.PI) * (0.6 + k * 0.6);
+      this.q.setFromAxisAngle(this.s.set(0.3, 1, 0.2).normalize(), p.max * 7 + k * 2);
+      this.m.compose(p.pos, this.q, this.s.set(sc, sc * 0.85, sc));
+      this.mesh.setMatrixAt(n, this.m);
+      this.mesh.setColorAt(n, p.color);
+      n++;
+    }
+    this.items = this.items.filter((p) => p.life > 0);
+    this.mesh.count = n;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  clear(): void {
+    this.items = [];
+    this.mesh.count = 0;
+  }
+}
+
+/** Smuga pocisku (wydłużony, świecący prostopadłościan, gaśnie po chwili). */
+export class Tracers {
+  readonly group = new THREE.Group();
+  private items: { mesh: THREE.Mesh; life: number }[] = [];
+  private readonly geo = new THREE.BoxGeometry(1, 1, 1);
+
+  fire(from: THREE.Vector3, to: THREE.Vector3, color: THREE.Color, width = 0.12): void {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const mesh = new THREE.Mesh(this.geo, mat);
+    const len = from.distanceTo(to);
+    mesh.position.copy(from).add(to).multiplyScalar(0.5);
+    mesh.lookAt(to);
+    mesh.scale.set(width, width, len);
+    this.group.add(mesh);
+    this.items.push({ mesh, life: 0.14 });
+  }
+
+  update(dt: number): void {
+    for (const t of this.items) {
+      t.life -= dt;
+      (t.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, t.life / 0.14);
+      t.mesh.scale.x *= 0.9;
+      t.mesh.scale.y *= 0.9;
+    }
+    this.items = this.items.filter((t) => {
+      if (t.life > 0) return true;
+      t.mesh.removeFromParent();
+      (t.mesh.material as THREE.Material).dispose();
+      return false;
+    });
+  }
+}

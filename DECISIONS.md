@@ -15,6 +15,19 @@ Miejsca, w których specyfikacja zostawiała wybór, i co wybrano.
 - **Przechyły**: ataki mają mocniejsze uniesienie/opuszczenie przodu kadłuba (pancerny zrzut nurkuje nosem ~28°). Pochylenie w locie i salto po wyrzucie liczy renderer z prędkości i stanu – nie wpływa na symulację.
 - **Lufa**: oś elewacji (czopy) jest z przodu wieży, a lufa wysuwa się teleskopowo z kołyski przymocowanej do jarzma – w symulacji i w modelu, więc lufa nigdy nie odstaje od wieży.
 
+## Wersja 3: „ninja w pancerzu”
+- Trafienie **nie zależy od wysokości** sylwetki: gdy obaj stoją na ziemi, hitbox jest rzutowany na wysokość przeciwnika (decyduje zasięg i poziom ciosu, jak w bijatykach). Lufa dodatkowo automatycznie celuje w środek sylwetki przeciwnika.
+- Kadłub ma w symulacji pełny przewrót przód–tył (`bodyPitch`) – hurtboxy i hitboxy obracają się razem z nim, więc salta i stójki na lufie trafiają tam, gdzie widać.
+- Tyczka: w fazie z `plant` koniec lufy jest punktem stałym, a pozycja czołgu wynika z obrotu wokół niego. Po puszczeniu prędkość jest ograniczana, żeby czołg nie wystrzelił w kosmos.
+- Skok o lufie jest naprowadzany (`leap`): prędkość pozioma wyliczana tak, by wylądować przy przeciwniku; kończy go fala uderzeniowa.
+- Doskok (podwójne stuknięcie), doskok w powietrzu (RUN + kierunek), podwójny skok z saltem; doskok można przerwać atakiem od 5. klatki.
+- KOBRA (niszczyciel bez wieży): działo ma tylko ±15° obrotu; zamachy z kluczy `yaw` są zamieniane na obrót całego kadłuba na gąsienicach.
+- Limity czasu faz skalują się bezwładnością (ciężkie czołgi nie ucinają zamachów).
+
+## Grafika (wersja 3)
+- Styl stylizowanego low-poly w wieczornym świetle (inspiracja ogólna z przesłanych obrazków, bez kopiowania): złota łąka z falującą trawą (instancje + shader wiatru, przygniatanie przez czołgi i ślady gąsienic) oraz wyspa z animowaną wodą; puchate obłoczki kurzu, winieta.
+- Modele czołgów budowane z „przekrojów” (`loft`) – skośne płyty, pochylone burty, różne wieże: kanciasta (ciężki), kopułowa (średni), oscylacyjna z koszem (lekki), kazamata (niszczyciel). Różne zawieszenia: koła zachodzące, duże Christie, małe z rolkami.
+
 ## Grafika (wersja 2)
 - Styl komiksowy inspirowany ogólnie „szalonymi” grami akcji: cieniowanie toon (4 progi), czarne kontury metodą odwróconej skorupy z wygładzonymi normalnymi, nasycone kolory z akcentami, gwiazdy uderzeń, napisy komiksowe, smugi ciosów, błysk ekranu i „kopnięcie” FOV przy mocnych trafieniach. Żadne zasoby ani projekty innych gier nie są kopiowane.
 

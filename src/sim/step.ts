@@ -1,7 +1,8 @@
 // Deterministyczna symulacja walki: step(state, inputP1, inputP2) -> state.
 // Wyłącznie arytmetyka całkowita, bez DOM, bez three.js, bez Math.random i czasu rzeczywistego.
 import {
-  ARENA_RADIUS, EV_BLOCK, EV_FIGHT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_ROUND, EV_SHOT, EV_TECH,
+  ARENA_RADIUS, DASH_BACK_SCALE, DASH_CANCEL, DASH_PROFILE, DOUBLE_TAP, EV_BLAST, EV_DASH, EV_FIRE, EV_PLANT,
+  SHOT_RANGE, ST_DASH, EV_BLOCK, EV_FIGHT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_ROUND, EV_SHOT, EV_TECH,
   EV_THROW, EV_TIMEUP, EV_WALL, EV_WHOOSH, FIGHT_CALL_FRAME, GETUP_FRAMES, HIST_LEN, INTRO_FRAMES,
   KNOCKDOWN_FRAMES, KO_FRAMES, PH_FIGHT, PH_INTRO, PH_KO, PH_MATCH_END, RUN_MAX, SIDESTEP_INVULN,
   SIDESTEP_PROFILE, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_BLOCKSTUN, ST_CROUCH, ST_GETUP, ST_HITSTUN,
@@ -9,7 +10,9 @@ import {
   ST_WIN, THROW_ACTIVE, THROW_FLIGHT, THROW_RANGE, THROW_RECOVERY, THROW_STARTUP, THROW_TECH,
 } from './constants';
 import { approach, clamp, iatan2, icos, isin, isqrt, signedAngle, trigMul } from './fixed';
-import { barrelPoints, barrelTip, hullFrontPoints, pointHitsFighter, type Point3 } from './geometry';
+import {
+  barrelDir, barrelPoints, barrelTip, hullBodyPoints, hullFrontPoints, hullTop, pointHitsFighter, trunnion, type Point3,
+} from './geometry';
 import {
   BUTTON_BITS, IN_BLOCK, IN_LP, IN_RUN, IN_SS_IN, IN_SS_OUT, REL_B, REL_D, REL_F, REL_U, dirMatches,
   relDirBits,
@@ -88,6 +91,14 @@ export function createFighter(tank: number, side: number): FighterState {
     idleFrames: 0,
     bounces: 0,
     chainBuf: 0,
+    bodyPitch: 0,
+    bodyPitchVel: 0,
+    planted: 0,
+    plantX: 0,
+    plantY: 0,
+    plantZ: 0,
+    spinBase: 0,
+    dashUsed: 0,
     chainTimer: 0,
     prevInput: 0,
     histHead: 0,
@@ -240,18 +251,23 @@ function stanceOf(f: FighterState): MoveStance | null {
       return 'run';
     case ST_AIR:
       return f.airAttackUsed ? null : 'air';
+    case ST_DASH:
+      // Doskok można przerwać atakiem.
+      if (f.stateFrame < DASH_CANCEL) return null;
+      return f.y > 0 ? (f.airAttackUsed ? null : 'air') : 'stand';
     default:
       return null;
   }
 }
 
-function findMove(f: FighterState, o: FighterState, pressed: number): CompiledMove | null {
+function findMove(f: FighterState, o: FighterState, pressed: number, input: number): CompiledMove | null {
   const stance = stanceOf(f);
   if (stance === null) return null;
   const t = tankOf(f);
   for (const m of t.moves) {
     if (m.def.chainOnly) continue;
     if (!(pressed & BUTTON_BITS[m.def.input.button])) continue;
+    if (m.def.input.withRun && !(input & IN_RUN)) continue;
     if (!m.def.stance.includes(stance)) continue;
     // Rzut tylko z bliska – w przeciwnym razie zwykłe dźgnięcie.
     if (m.index === THROW_MOVE && frontGap(f, o) > THROW_RANGE + 400) continue;
@@ -285,9 +301,11 @@ function startMove(s: GameState, i: number, m: CompiledMove): void {
   f.moveConnected = 0;
   f.blocking = 0;
   f.crouching = m.def.stance.includes('crouch') && f.crouching ? 1 : 0;
-  if (wasAir) f.airAttackUsed = 1;
+  if (wasAir || f.y > 0) f.airAttackUsed = 1;
+  f.planted = 0;
   const aim = aimAngle(f, o);
   f.moveBaseYaw = nearestUnwrapped(f.turretYaw, aim - f.hullYaw - f.pivot);
+  f.spinBase = f.pivot;
   enterKey(s, i);
 }
 
@@ -326,8 +344,47 @@ function enterKey(s: GameState, i: number): void {
     const [along, perp] = axisVel(f, aim);
     setAxisVel(f, aim, along + k.impulse, perp);
   }
-  if (k.vyImpulse !== 0) f.vy += k.vyImpulse;
-  if (k.active) emit(s, EV_WHOOSH, i, barrelTip(f, t), m.damage);
+  if (k.vyImpulse !== 0) {
+    f.vy += k.vyImpulse;
+    if (f.vy > 0 && f.y <= 0) f.y = 1;
+  }
+  // Lufa wbita w ziemię: punkt podparcia na końcu lufy (najwyżej na wysokości podłoża).
+  if (k.plant && !f.planted) {
+    const tip = barrelTip(f, t);
+    f.planted = 1;
+    f.plantX = tip.x;
+    f.plantY = Math.max(0, tip.y < 700 ? 0 : tip.y);
+    f.plantZ = tip.z;
+    emit(s, EV_PLANT, i, { x: f.plantX, y: f.plantY, z: f.plantZ }, t.mass);
+  } else if (!k.plant && f.planted) {
+    // Puszczenie tyczki: pęd z obrotu, ale w rozsądnych granicach.
+    f.planted = 0;
+    f.vx = clamp(f.vx, -300, 300);
+    f.vz = clamp(f.vz, -300, 300);
+    f.vy = clamp(f.vy, -200, 380);
+  }
+  if (k.leap !== null && f.vy > 0) {
+    // Lot naprowadzany na przeciwnika: prędkość pozioma tak, by wylądować obok/na nim.
+    const o = s.fighters[1 - i]!;
+    const dx = o.x - f.x;
+    const dz = o.z - f.z;
+    const airtime = Math.max(1, Math.trunc((2 * f.vy) / GRAVITY));
+    const along = clamp(Math.trunc((isqrt(dx * dx + dz * dz) - k.leap) / airtime), 0, Math.trunc((t.run * 18) / 10));
+    const [, perp] = axisVel(f, aim);
+    setAxisVel(f, aim, along, Math.trunc(perp / 4));
+  }
+  if (k.fire) {
+    const d = barrelDir(f, t);
+    const tip = barrelTip(f, t);
+    if (k.recoil !== 0) {
+      f.vx -= trigMul(k.recoil, d.x);
+      f.vy -= trigMul(k.recoil, d.y);
+      f.vz -= trigMul(k.recoil, d.z);
+      if (f.vy > 0 && f.y <= 0) f.y = 1;
+    }
+    emit(s, k.fire === 'blast' ? EV_BLAST : EV_FIRE, i, tip, m.damage);
+  }
+  if (k.active && !k.fire) emit(s, EV_WHOOSH, i, barrelTip(f, t), m.damage);
 }
 
 /** Cel napędów w bieżącej fazie ataku (null = pozycja spoczynkowa). */
@@ -336,13 +393,27 @@ function moveTargets(f: FighterState, t: TankParams, rest: Targets): Targets {
   const k = m.keys[f.moveKey];
   if (!k) return rest;
   const sign = yawSign(f);
+  // Niszczyciel bez wieży: zamach lufą robi cały kadłub (obrót na gąsienicach).
+  const casemate = t.def.casemate === true;
+  let pivot = k.pivot === null ? 0 : k.pivot * sign;
+  let spin = false;
+  if (k.hullSpin !== null) {
+    pivot = f.spinBase + k.hullSpin * sign;
+    spin = true;
+  } else if (casemate && k.yaw !== null) {
+    pivot = f.spinBase + k.yaw * sign;
+    spin = true;
+  }
   return {
-    yaw: k.yaw === null ? rest.yaw : f.moveBaseYaw + k.yaw * sign,
-    pitch: k.pitch === null ? rest.pitch : k.pitch,
+    yaw: k.yaw === null || casemate ? rest.yaw : f.moveBaseYaw + k.yaw * sign,
+    pitch: clamp(k.pitch === null ? rest.pitch : k.pitch + rest.aimPitch, t.pitchMin, t.pitchMax),
     ext: k.ext === null ? 0 : k.ext,
     lift: k.lift === null ? 0 : k.lift,
-    pivot: k.pivot === null ? 0 : k.pivot * sign,
+    pivot,
     slam: k.slam,
+    body: k.bodyPitch === null ? null : k.bodyPitch,
+    spin,
+    aimPitch: rest.aimPitch,
   };
 }
 
@@ -353,11 +424,17 @@ interface Targets {
   lift: number;
   pivot: number;
   slam: boolean;
+  /** Przewrót kadłuba (null = swobodny powrót do pionu). */
+  body: number | null;
+  /** Piwot napędzany jak młynek (pełne obroty). */
+  spin: boolean;
+  aimPitch: number;
 }
 
 function near(err: number, vel: number, tol: number, slam: boolean): boolean {
-  // W trybie `slam` cel jest osiągnięty, gdy napęd go mija (lub minie w tej klatce).
-  return Math.abs(err) <= (slam ? Math.max(tol, Math.abs(vel)) : tol);
+  // W trybie `slam` cel jest osiągnięty, gdy napęd go minął (pęd niesie dalej).
+  if (Math.abs(err) <= tol) return true;
+  return slam && err * vel < 0 && Math.abs(vel) > 50;
 }
 
 function reached(f: FighterState, tg: Targets, k: CompiledMove['keys'][number]): boolean {
@@ -366,7 +443,8 @@ function reached(f: FighterState, tg: Targets, k: CompiledMove['keys'][number]):
   if (k.pitch !== null && !near(tg.pitch - f.pitch, f.pitchVel, TOL_PITCH, sl)) return false;
   if (k.ext !== null && !near(tg.ext - f.ext, f.extVel, TOL_EXT, sl)) return false;
   if (k.lift !== null && !near(tg.lift - f.lift, f.liftVel, TOL_LIFT, sl)) return false;
-  if (k.pivot !== null && !near(tg.pivot - f.pivot, f.pivotVel, TOL_PIVOT, sl)) return false;
+  if ((k.pivot !== null || tg.spin) && !near(tg.pivot - f.pivot, f.pivotVel, TOL_PIVOT, sl)) return false;
+  if (k.bodyPitch !== null && !near(k.bodyPitch - f.bodyPitch, f.bodyPitchVel, TOL_PIVOT, sl)) return false;
   return true;
 }
 
@@ -377,7 +455,8 @@ function settled(f: FighterState, tg: Targets, t: TankParams): boolean {
     Math.abs(tg.pitch - f.pitch) <= TOL_PITCH * 2 &&
     Math.abs(f.ext) <= TOL_EXT * 2 &&
     Math.abs(f.lift) <= TOL_LIFT * 2 &&
-    Math.abs(f.pivot) <= TOL_PIVOT * 2
+    Math.abs(signedAngle(f.pivot)) <= TOL_PIVOT * 2 &&
+    Math.abs(signedAngle(f.bodyPitch)) <= TOL_PIVOT * 2
   );
 }
 
@@ -412,9 +491,14 @@ function advanceMove(s: GameState, i: number, tg: Targets): void {
 }
 
 function endMove(f: FighterState): void {
+  const m = f.move >= 0 ? tankOf(f).moves[f.move] : undefined;
   f.move = -1;
+  f.planted = 0;
   f.turretYaw = signedAngle(f.turretYaw);
+  f.pivot = signedAngle(f.pivot);
+  f.bodyPitch = signedAngle(f.bodyPitch);
   f.moveBaseYaw = 0;
+  if (m?.def.resetAir) f.airAttackUsed = 0;
   if (f.y > 0) {
     setState(f, ST_AIR);
   } else {
@@ -434,7 +518,27 @@ function isActive(f: FighterState): CompiledMove | null {
 // ---------------------------------------------------------------- logika stanów
 
 function canAct(f: FighterState): boolean {
-  return f.state === ST_IDLE || f.state === ST_CROUCH || f.state === ST_RUN;
+  return f.state === ST_IDLE || f.state === ST_CROUCH || f.state === ST_RUN || (f.state === ST_DASH && f.stateFrame >= DASH_CANCEL);
+}
+
+/** Podwójne stuknięcie kierunku: wciśnięty teraz, puszczony klatkę temu, wciśnięty niedawno wcześniej. */
+function doubleTap(f: FighterState, bit: number): boolean {
+  if (!(histRel(f, 0) & bit) || histRel(f, 1) & bit) return false;
+  for (let ago = 2; ago <= DOUBLE_TAP; ago++) if (histRel(f, ago) & bit) return true;
+  return false;
+}
+
+function startDash(s: GameState, i: number, dir: number): void {
+  const f = s.fighters[i]!;
+  setState(f, ST_DASH);
+  f.jumpDir = dir;
+  f.blocking = 0;
+  f.crouching = 0;
+  if (f.y > 0) {
+    f.dashUsed |= 1;
+    f.vy = Math.max(f.vy, 40);
+  }
+  emit(s, EV_DASH, i, f, dir);
 }
 
 function updateFighter(s: GameState, i: number, input: number): void {
@@ -450,7 +554,7 @@ function updateFighter(s: GameState, i: number, input: number): void {
 
   // Ataki mają pierwszeństwo.
   if (canAct(f) || f.state === ST_AIR) {
-    const m = findMove(f, o, pressed);
+    const m = findMove(f, o, pressed, input);
     if (m) startMove(s, i, m);
   } else if (f.state === ST_ATTACK && f.move >= 0) {
     tryChain(s, i, pressed, rel);
@@ -470,6 +574,10 @@ function updateFighter(s: GameState, i: number, input: number): void {
         f.sideDir = pressed & IN_SS_IN ? -1 : 1;
         f.linearInvuln = SIDESTEP_INVULN;
         f.blocking = 0;
+        break;
+      }
+      if (!f.blocking && (doubleTap(f, REL_F) || doubleTap(f, REL_B))) {
+        startDash(s, i, rel & REL_F ? 1 : -1);
         break;
       }
       if (rel & REL_U && !f.blocking) {
@@ -492,9 +600,41 @@ function updateFighter(s: GameState, i: number, input: number): void {
       }
       break;
     }
+    case ST_AIR: {
+      // Podwójny skok (z saltem) i doskok w powietrzu.
+      const upEdge = rel & REL_U && !(histRel(f, 1) & REL_U);
+      if (upEdge && !(f.dashUsed & 2) && f.stateFrame > 3) {
+        f.dashUsed |= 2;
+        f.vy = Math.trunc((t.jumpVel * 85) / 100);
+        f.bodyPitchVel = rel & REL_B ? t.flipMaxVel : -t.flipMaxVel;
+        const along = rel & REL_F ? Math.trunc((t.walk * 22) / 10) : rel & REL_B ? -Math.trunc((t.walk * 15) / 10) : 0;
+        if (along !== 0) setAxisVel(f, aim, along, 0);
+        emit(s, EV_JUMP, i, f, t.mass);
+      } else if (!(f.dashUsed & 1) && (doubleTap(f, REL_F) || doubleTap(f, REL_B) || (input & IN_RUN && !(f.prevInput & IN_RUN) && rel & (REL_F | REL_B)))) {
+        startDash(s, i, rel & REL_F ? 1 : -1);
+      }
+      break;
+    }
+    case ST_DASH: {
+      const idx = f.stateFrame - 1;
+      if (idx >= DASH_PROFILE.length) {
+        setState(f, f.y > 0 ? ST_AIR : ST_IDLE);
+        break;
+      }
+      const scale = clamp(t.kickScale, 800, 1300);
+      let v = Math.trunc((DASH_PROFILE[idx]! * scale) / 1000);
+      if (f.jumpDir < 0) v = -Math.trunc((v * DASH_BACK_SCALE) / 1000);
+      setAxisVel(f, aim, v, 0);
+      if (f.y > 0) f.vy = Math.max(f.vy, idx < 6 ? GRAVITY : 0);
+      break;
+    }
     case ST_RUN: {
       f.blocking = 0;
       controlVel = true;
+      if (doubleTap(f, REL_F)) {
+        startDash(s, i, 1);
+        break;
+      }
       if (!(rel & REL_F) || !(input & IN_RUN) || f.run <= 0) {
         setState(f, ST_IDLE);
         desiredAlong = t.walk;
@@ -508,6 +648,7 @@ function updateFighter(s: GameState, i: number, input: number): void {
       if (f.stateFrame >= t.jumpSquat) {
         setState(f, ST_AIR);
         f.airAttackUsed = 0;
+        f.dashUsed = 0;
         f.vy = t.jumpVel;
         const along = f.jumpDir > 0 ? Math.trunc((t.walk * 24) / 10) : f.jumpDir < 0 ? -Math.trunc((t.walk * 15) / 10) : 0;
         setAxisVel(f, aim, along, 0);
@@ -584,7 +725,7 @@ function updateFighter(s: GameState, i: number, input: number): void {
     const [along, perp] = axisVel(f, aim);
     const acc = f.state === ST_RUN ? Math.trunc((t.accel * 3) / 2) : t.accel;
     setAxisVel(f, aim, approach(along, desiredAlong, acc), approach(perp, 0, acc * 2));
-  } else if (f.y <= 0 && f.state !== ST_SIDESTEP && f.state !== ST_THROWN) {
+  } else if (f.y <= 0 && f.state !== ST_SIDESTEP && f.state !== ST_THROWN && f.state !== ST_DASH && !f.planted) {
     // Tarcie gąsienic w stanach bez kontroli (odrzut, atak).
     const fr = f.state === ST_ATTACK ? Math.trunc(t.accel / 2) + 1 : t.accel;
     const [along, perp] = axisVel(f, aim);
@@ -592,27 +733,57 @@ function updateFighter(s: GameState, i: number, input: number): void {
   }
 
   // Kadłub obraca się w stronę przeciwnika (zawracanie w miejscu po przeskoku).
-  if (grounded(f) && f.state !== ST_THROWN && f.state !== ST_KNOCKDOWN && f.state !== ST_KO) {
+  if (grounded(f) && !f.planted && f.state !== ST_THROWN && f.state !== ST_KNOCKDOWN && f.state !== ST_KO) {
     f.hullYaw = (f.hullYaw + clamp(signedAngle(aim - f.hullYaw), -t.hullTurn, t.hullTurn) + 36000) % 36000;
   }
 
   // Napędy wieży, lufy i kadłuba.
+  const aimPitch = f.state === ST_KO ? 0 : elevationTo(f, o);
+  let restYaw = nearestUnwrapped(f.turretYaw, aim - f.hullYaw - f.pivot) + (f.blocking ? -5500 * yawSign(f) : 0);
+  if (t.def.casemate) restYaw = clamp(signedAngle(restYaw), -1500, 1500);
   const rest: Targets = {
-    yaw: nearestUnwrapped(f.turretYaw, aim - f.hullYaw - f.pivot) + (f.blocking ? -5500 * yawSign(f) : 0),
-    pitch: f.blocking ? 900 : f.crouching ? -500 : f.state === ST_KO ? -1000 : 0,
+    yaw: restYaw,
+    pitch: (f.blocking ? 900 : f.crouching ? -500 : f.state === ST_KO ? -1000 : 0) + aimPitch,
     ext: 0,
-    lift: 0,
+    lift: f.state === ST_DASH ? (f.jumpDir > 0 ? 700 : -500) : 0,
     pivot: 0,
     slam: false,
+    body: null,
+    spin: false,
+    aimPitch,
   };
   if (f.state === ST_THROWING && f.moveConnected) rest.pitch = t.pitchMax;
+  rest.pitch = clamp(rest.pitch, t.pitchMin, t.pitchMax);
   const tg = f.state === ST_ATTACK ? moveTargets(f, t, rest) : rest;
   const sl = tg.slam;
   [f.turretYaw, f.turretVel] = drive(f.turretYaw, f.turretVel, tg.yaw, t.turretMaxVel, t.turretAccel, sl);
   [f.pitch, f.pitchVel] = drive(f.pitch, f.pitchVel, clamp(tg.pitch, t.pitchMin, t.pitchMax), t.pitchMaxVel, t.pitchAccel, sl);
   [f.ext, f.extVel] = drive(f.ext, f.extVel, tg.ext, t.extMaxVel, t.extAccel, sl);
   [f.lift, f.liftVel] = drive(f.lift, f.liftVel, tg.lift, t.liftMaxVel, t.liftAccel, sl);
-  [f.pivot, f.pivotVel] = drive(f.pivot, f.pivotVel, tg.pivot, t.pivotMaxVel, t.pivotAccel, sl);
+  if (tg.spin) [f.pivot, f.pivotVel] = drive(f.pivot, f.pivotVel, tg.pivot, t.spinMaxVel, t.spinAccel, sl);
+  else [f.pivot, f.pivotVel] = drive(f.pivot, f.pivotVel, tg.pivot, t.pivotMaxVel, t.pivotAccel, sl);
+  // Przewrót kadłuba: sterowany ruchem albo swobodnie dokręca się do pełnego obrotu.
+  let bodyTarget: number;
+  if (tg.body !== null) bodyTarget = tg.body;
+  else if (f.bodyPitchVel < -50) bodyTarget = -36000 * Math.ceil(-f.bodyPitch / 36000 + 0.001);
+  else if (f.bodyPitchVel > 50) bodyTarget = 36000 * Math.ceil(f.bodyPitch / 36000 + 0.001);
+  else bodyTarget = 36000 * Math.round(f.bodyPitch / 36000);
+  if (tg.body === null && f.y <= 0) bodyTarget = 36000 * Math.round(f.bodyPitch / 36000);
+  [f.bodyPitch, f.bodyPitchVel] = drive(f.bodyPitch, f.bodyPitchVel, bodyTarget, t.flipMaxVel, t.flipAccel, sl && tg.body !== null);
+  if (tg.body === null && f.bodyPitchVel === 0 && f.bodyPitch % 36000 === 0) f.bodyPitch = 0;
+  // Tyczka: koniec lufy stoi w miejscu, a cały czołg obraca się wokół niego.
+  if (f.planted) {
+    const tip = barrelTip(f, t);
+    const dx = f.plantX - tip.x;
+    const dy = f.plantY - tip.y;
+    const dz = f.plantZ - tip.z;
+    f.x += dx;
+    f.z += dz;
+    f.y = Math.max(0, f.y + dy);
+    f.vx = dx;
+    f.vy = dy;
+    f.vz = dz;
+  }
   // Mechaniczne ograniczniki: elewacja i wysunięcie lufy.
   if (f.pitch < t.pitchMin || f.pitch > t.pitchMax) {
     f.pitch = clamp(f.pitch, t.pitchMin, t.pitchMax);
@@ -782,13 +953,60 @@ function hitTest(s: GameState, i: number, m: CompiledMove): Point3 | null {
     if (dx * dx + dz * dz > reach * reach) return null;
     return { x: (a.x + d.x) >> 1, y: 200, z: (a.z + d.z) >> 1 };
   }
-  const pts = m.def.source === 'barrel' ? barrelPoints(a, at) : hullFrontPoints(a, at);
-  const r = m.def.source === 'barrel' ? m.radius : 350;
+  if (m.def.source === 'blast') {
+    const tip = barrelTip(a, at);
+    return pointHitsFighter({ x: tip.x, y: Math.max(tip.y, lo0(d)), z: tip.z }, 2600, d, dt) ? tip : null;
+  }
+  let pts: Point3[];
+  let r: number;
+  if (m.def.source === 'shot') {
+    // Pocisk: promień wzdłuż lufy.
+    const tip = barrelTip(a, at);
+    const dir = barrelDir(a, at);
+    pts = [];
+    for (let s2 = 0; s2 <= SHOT_RANGE; s2 += 350) {
+      pts.push({ x: tip.x + trigMul(s2, dir.x), y: tip.y + trigMul(s2, dir.y), z: tip.z + trigMul(s2, dir.z) });
+    }
+    pts.reverse();
+    r = 250;
+  } else if (m.def.source === 'body') {
+    pts = hullBodyPoints(a, at);
+    r = 450;
+  } else {
+    pts = m.def.source === 'barrel' ? barrelPoints(a, at) : hullFrontPoints(a, at);
+    r = m.def.source === 'barrel' ? m.radius : 350;
+  }
+  // Wysokość czołgu nie decyduje o trafieniu: gdy obaj stoją na ziemi, cios „sięga” całej
+  // sylwetki przeciwnika (o trafieniu decyduje zasięg i poziom ciosu, jak w bijatykach).
+  const dGround = d.y <= 0 && Math.abs(signedAngle(d.bodyPitch)) < 2000;
+  // Akrobacje kadłubem „sięgają” w dół na wysokość przeciwnika, gdy są tuż nad nim.
+  const aGround = a.y <= 400 || m.def.source === 'body';
+  const lo = d.y + 200;
+  const hi = hullTop(d, dt) + Math.trunc((dt.turretHeight * 2) / 3);
   for (let k = pts.length - 1; k >= 0; k--) {
     const p = pts[k]!;
-    if (pointHitsFighter(p, r, d, dt)) return p;
+    const near = p.y <= hi + 1800;
+    const q = dGround && aGround && near && m.def.source !== 'shot' ? { x: p.x, y: clamp(p.y, lo, hi), z: p.z } : p;
+    if (pointHitsFighter(q, r, d, dt)) return p;
   }
   return null;
+}
+
+function lo0(d: FighterState): number {
+  return d.y + 300;
+}
+
+/** Elewacja lufy potrzebna, by celować w środek sylwetki przeciwnika (automatyczne celowanie). */
+function elevationTo(f: FighterState, o: FighterState): number {
+  const t = tankOf(f);
+  const ot = tankOf(o);
+  const p = trunnion(f, t);
+  const dx = o.x - p.x;
+  const dz = o.z - p.z;
+  const dist = isqrt(dx * dx + dz * dz);
+  if (dist < 500) return 0;
+  const dy = o.y + Math.trunc((ot.hullHeight * 8) / 10) - p.y;
+  return clamp(signedAngle(iatan2(dy, dist)), -1800, 1500);
 }
 
 interface PendingHit {
@@ -865,6 +1083,7 @@ function resolveHit(s: GameState, h: PendingHit): void {
     d.stun = m.def.hitstun;
   }
   d.crouching = 0;
+  d.planted = 0;
   const [, perp] = axisVel(d, aim);
   setAxisVel(d, aim, kb, perp);
   d.suspVel += Math.trunc(kb / 2);
@@ -877,7 +1096,7 @@ function resolveHit(s: GameState, h: PendingHit): void {
 function integrate(s: GameState, i: number): void {
   const f = s.fighters[i]!;
   const t = tankOf(f);
-  if (f.state === ST_THROWN) return;
+  if (f.state === ST_THROWN || f.planted) return;
   f.x += f.vx;
   f.z += f.vz;
   if (f.y > 0 || f.vy > 0) {
@@ -887,6 +1106,13 @@ function integrate(s: GameState, i: number): void {
       const impact = -f.vy;
       f.y = 0;
       f.vy = 0;
+      f.dashUsed = 0;
+      f.bodyPitchVel = 0;
+      if (f.state === ST_ATTACK) {
+        // Lądowanie po akrobacji – gąsienice łapią przyczepność.
+        f.vx = Math.trunc(f.vx / 3);
+        f.vz = Math.trunc(f.vz / 3);
+      }
       f.suspVel += Math.trunc(impact / 3);
       emit(s, EV_LAND, i, f, Math.trunc((t.mass * Math.min(impact, 600)) / 300));
       if (f.state === ST_AIR) setState(f, ST_LAND);

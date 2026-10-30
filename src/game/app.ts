@@ -361,6 +361,9 @@ export class App {
       ['Blok', 'Spacja', 'Num 0'],
       ['Unik w głąb', 'B', 'Num 1'],
       ['Unik do kamery', 'M', 'Num 3'],
+      ['Doskok', '2× przód / tył', '2× → / ←'],
+      ['Podwójny skok (salto)', 'W w powietrzu', '↑ w powietrzu'],
+      ['Doskok w powietrzu', 'H + kierunek', 'Num 5 + kierunek'],
     ];
     const label = (id: string, depth = 0): string => {
       const m = MOVES.find((x) => x.id === id)!;
@@ -371,7 +374,8 @@ export class App {
       }
       const seq = m.input.sequence.map((d) => ({ D: 'dół', B: 'tył', F: 'przód', U: 'góra' } as Record<string, string>)[d] ?? d);
       const st = m.stance.includes('air') && !m.stance.includes('stand') ? 'w skoku + ' : '';
-      return st + [...seq, m.input.button].join(' + ');
+      const run = m.input.withRun ? 'RUN + ' : '';
+      return st + run + [...seq, m.input.button].join(' + ');
     };
     const moves = MOVES.map((m) =>
       h('tr', {}, h('td', {}, m.name), h('td', {}, label(m.id)), h('td', {}, m.desc)));
