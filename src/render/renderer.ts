@@ -965,8 +965,8 @@ export class GameRenderer {
     this.puffs.update(dt);
     this.arena?.update(t, this.show.map((m) => new THREE.Vector3(m!.root.position.x, 0, m!.def.hullLength / 2 + 0.6)));
     // Czołgi w środkowym pasie ekranu – nad tabliczkami z nazwami, po bokach kafelków.
-    this.camPos.lerp(new THREE.Vector3(0, 2.7, 15.5), Math.min(1, dt * 3));
-    this.camLook.lerp(new THREE.Vector3(0, -0.2, 0), Math.min(1, dt * 3));
+    this.camPos.lerp(new THREE.Vector3(0, 2.4, 13), Math.min(1, dt * 3));
+    this.camLook.lerp(new THREE.Vector3(0, 0.05, 0), Math.min(1, dt * 3));
     this.camera.position.copy(this.camPos).add(this.shake.offset);
     this.camera.lookAt(this.camLook);
     this.shake.update(dt);
@@ -994,13 +994,17 @@ export class GameRenderer {
     m.root.rotation.y = -0.75;
     m.mantlet.rotation.z = 0.12;
     m.turret.rotation.y = 0.25;
+    m.updateTracks(0, 0, 0, 0);
     scene.add(m.root);
     const box = new THREE.Box3().setFromObject(m.root);
     const c = box.getCenter(new THREE.Vector3());
-    const cam = new THREE.PerspectiveCamera(26, 1, 0.1, 100);
-    const r = box.getSize(new THREE.Vector3()).length() * 0.5;
-    cam.position.set(c.x + r * 1.1, c.y + r * 0.9, c.z + r * 1.9);
-    cam.lookAt(c.x + r * 0.08, c.y - r * 0.05, c.z);
+    // Bez anteny w rachunku – inaczej wysoki pręt pomniejsza czołg w kadrze.
+    const hull = new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(0, m.def.hullHeight * 0.75, 0), new THREE.Vector3(m.def.hullLength, m.def.hullHeight * 1.6, m.def.hullWidth));
+    hull.getCenter(c);
+    const cam = new THREE.PerspectiveCamera(24, 1, 0.1, 100);
+    const r = hull.getSize(new THREE.Vector3()).length() * 0.5;
+    cam.position.set(c.x + r * 1.5, c.y + r * 0.85, c.z + r * 3.3);
+    cam.lookAt(c.x + r * 0.12, c.y, c.z);
     const prevClear = this.renderer.getClearAlpha();
     const prevColor = this.renderer.getClearColor(new THREE.Color());
     const prevTone = this.renderer.toneMapping;

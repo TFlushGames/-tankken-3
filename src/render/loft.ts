@@ -56,9 +56,16 @@ export function loft(sections: Section[]): THREE.BufferGeometry {
     if (nrm.lengthSq() < 1e-10) continue;
     mid.copy(p0).add(p1).add(p2).divideScalar(3).sub(c);
     if (nrm.dot(mid) < 0) [p1, p2] = [p2, p1];
+    // UV rzutowane na płaszczyznę płyty (1 jednostka = 1 m) – kamuflaż leży równo na pancerzu.
+    nrm.normalize();
+    const ax = Math.abs(nrm.x);
+    const ay = Math.abs(nrm.y);
+    const az = Math.abs(nrm.z);
     for (const p of [p0, p1, p2]) {
       pos.push(p.x, p.y, p.z);
-      uv.push(p.x * 0.35 + p.z * 0.2, p.y * 0.35 + p.z * 0.25);
+      if (ay >= ax && ay >= az) uv.push(p.x, p.z);
+      else if (az >= ax) uv.push(p.x, p.y);
+      else uv.push(p.z, p.y);
     }
   }
   const g = new THREE.BufferGeometry();

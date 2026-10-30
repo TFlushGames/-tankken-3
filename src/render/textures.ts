@@ -106,6 +106,98 @@ export function toonCamoTexture(base: string, patch: string, seed: number): THRE
   return t;
 }
 
+export type CamoKind = 'stripes' | 'solid' | 'splinter' | 'tiger';
+
+/**
+ * Pancerz: kamuflaż o ostrych (komiksowych) krawędziach + zużycie – plamy kurzu,
+ * odpryski farby, rysy. Tekstura obejmuje 4 m pancerza (UV w metrach × 0,25).
+ */
+export function armorTexture(kind: CamoKind, colors: string[], seed: number): THREE.CanvasTexture {
+  const size = 512;
+  const [c, g] = makeCanvas(size);
+  const img = g.createImageData(size, size);
+  const cols = colors.map((h) => new THREE.Color(h));
+  const base = cols[0]!;
+  // Komórki „splinter” – punkty Woronoja z przypisanym kolorem.
+  const cells: [number, number, number][] = [];
+  for (let i = 0; i < 26; i++) cells.push([hash2(i, 1, seed), hash2(i, 2, seed), Math.floor(hash2(i, 3, seed) * 3)]);
+  const pick = (u: number, v: number): THREE.Color => {
+    const w1 = valueNoise(u * 6, v * 6, seed + 40, 2) - 0.5;
+    const w2 = valueNoise(u * 6 + 9, v * 6 + 4, seed + 41, 2) - 0.5;
+    if (kind === 'stripes') {
+      // Szerokie, faliste pasy po skosie (trzy kolory).
+      const t = (u + v * 0.55 + w1 * 0.22) * 3.2;
+      const k = t - Math.floor(t);
+      const n = valueNoise(u * 2.5, v * 2.5, seed + 5, 2);
+      if (k < 0.3) return cols[1]!;
+      if (k > 0.62 && n > 0.42) return cols[2]!;
+      return base;
+    }
+    if (kind === 'splinter') {
+      let best = 9;
+      let second = 9;
+      let id = 0;
+      for (const [cx, cy, ci] of cells) {
+        for (const ox of [-1, 0, 1]) for (const oy of [-1, 0, 1]) {
+          const dx = u - cx - ox;
+          const dy = v - cy - oy;
+          // Metryka „rombowa” – kanciaste odłamki.
+          const d = Math.abs(dx * 0.8 + dy * 0.6) + Math.abs(dx * -0.6 + dy * 0.8) * 1.6;
+          if (d < best) {
+            second = best;
+            best = d;
+            id = ci;
+          } else if (d < second) second = d;
+        }
+      }
+      void second;
+      return cols[id % cols.length]!;
+    }
+    if (kind === 'tiger') {
+      // Pionowe, poszarpane pasy jak w kamuflażu „zasadzka”, plus kropki.
+      const t = (u * 7 + w1 * 0.9 + valueNoise(v * 9, u * 2, seed + 7, 2) * 0.8) % 1;
+      if (t < 0.16 && valueNoise(u * 3, v * 1.5, seed + 8, 2) > 0.45) return cols[1]!;
+      // Okrągłe kropki „zasadzki”.
+      const cu = u * 22;
+      const cv = v * 22;
+      const fx = cu - Math.floor(cu) - 0.5;
+      const fy = cv - Math.floor(cv) - 0.5;
+      if (hash2(Math.floor(cu), Math.floor(cv), seed + 9) > 0.8 && fx * fx + fy * fy < 0.06) return cols[2]!;
+      return base;
+    }
+    // Jednolity: tylko delikatne, jaśniejsze przetarcia.
+    return valueNoise(u * 5 + w2, v * 5, seed + 3, 3) > 0.66 ? cols[1]! : base;
+  };
+  const tmp = new THREE.Color();
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      tmp.copy(pick(u, v));
+      // Zużycie: duże plamy jaśniejszego kurzu, drobne ciemne zabrudzenia, odpryski farby.
+      const dust = valueNoise(u * 3, v * 3, seed + 20, 3);
+      const fine = valueNoise(u * 40, v * 40, seed + 21, 2);
+      let k = 0.93 + (fine - 0.5) * 0.1;
+      if (dust > 0.6) tmp.lerp(new THREE.Color('#c8b48a'), Math.min(0.28, (dust - 0.6) * 1.2));
+      const chip = hash2(x >> 1, y >> 1, seed + 22);
+      if (chip > 0.9965) tmp.setRGB(0.42, 0.4, 0.37);
+      else if (chip > 0.993) k *= 1.18;
+      // Rysy: krótkie ukośne linie.
+      const sc = valueNoise(u * 90, v * 4, seed + 23, 1);
+      if (sc > 0.86 && fine > 0.55) k *= 0.82;
+      const i = (y * size + x) * 4;
+      img.data[i] = Math.min(255, tmp.r * 255 * k);
+      img.data[i + 1] = Math.min(255, tmp.g * 255 * k);
+      img.data[i + 2] = Math.min(255, tmp.b * 255 * k);
+      img.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = toTexture(c);
+  t.repeat.set(0.25, 0.25);
+  return t;
+}
+
 /** Szorstkość: zabrudzenia i rysy. */
 export function grimeTexture(seed: number): THREE.CanvasTexture {
   const size = 128;
