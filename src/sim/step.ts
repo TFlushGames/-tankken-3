@@ -25,6 +25,10 @@ const BUTTON_MASK = 0xff0;
 const THROW_MOVE = MOVE_INDEX['throw']!;
 /** Podbicie przy trafieniu w powietrzu (mm/klatkę). */
 const JUGGLE_LIFT = 330;
+/** Najwyższy punkt lotu trafionego czołgu (mm) – żonglerka nie wyrzuca „w kosmos”. */
+const JUGGLE_MAX_HEIGHT = 4500;
+/** Przestrzelenie zamachu wieży po trafieniu (setne stopnia). */
+const FOLLOW_YAW = 2500;
 /** Podskok przy mocnym ciosie i przy przyjęciu trafienia (mm/klatkę). */
 const STRIKE_HOP = 75;
 const HIT_HOP = 60;
@@ -97,6 +101,8 @@ export function createFighter(tank: number, side: number): FighterState {
     bufBtn: 0,
     bufTimer: 0,
     contactRecover: 0,
+    follow: 0,
+    followKey: 0,
     reload: 0,
     blockStreak: 0,
     bodyPitch: 0,
@@ -317,6 +323,7 @@ function startMove(s: GameState, i: number, m: CompiledMove): void {
   f.bufBtn = 0;
   f.bufTimer = 0;
   f.contactRecover = 0;
+  f.follow = 0;
   if (m.def.cannon) f.reload = CANNON_RELOAD;
   f.move = m.index;
   f.moveKey = 0;
@@ -328,7 +335,7 @@ function startMove(s: GameState, i: number, m: CompiledMove): void {
   f.blocking = 0;
   f.crouching = m.def.stance.includes('crouch') && f.crouching ? 1 : 0;
   if (wasAir || f.y > 0) f.airAttackUsed = 1;
-  f.planted = 0;
+  releasePlant(f);
   const aim = aimAngle(f, o);
   f.moveBaseYaw = nearestUnwrapped(f.turretYaw, aim - f.hullYaw - f.pivot);
   f.spinBase = f.pivot;
@@ -378,11 +385,7 @@ function enterKey(s: GameState, i: number): void {
     f.plantZ = tip.z;
     emit(s, EV_PLANT, i, { x: f.plantX, y: f.plantY, z: f.plantZ }, t.mass);
   } else if (!k.plant && f.planted) {
-    // Puszczenie tyczki: pęd z obrotu, ale w rozsądnych granicach.
-    f.planted = 0;
-    f.vx = clamp(f.vx, -300, 300);
-    f.vz = clamp(f.vz, -300, 300);
-    f.vy = clamp(f.vy, -200, 380);
+    releasePlant(f);
   }
   if (k.leap !== null && f.vy > 0) {
     // Lot naprowadzany na przeciwnika: prędkość pozioma tak, by wylądować obok/na nim.
@@ -449,7 +452,9 @@ function enterKey(s: GameState, i: number): void {
 /** Cel napędów w bieżącej fazie ataku (null = pozycja spoczynkowa). */
 function moveTargets(f: FighterState, t: TankParams, rest: Targets): Targets {
   const m = t.moves[f.move]!;
-  const k = m.keys[f.moveKey];
+  // Po trafieniu zamach jeszcze chwilę trwa (z przestrzeleniem), zamiast zamierać w pół ruchu.
+  const following = f.follow > 0;
+  const k = m.keys[following ? f.followKey : f.moveKey];
   if (!k) return rest;
   const sign = yawSign(f);
   // Niszczyciel bez wieży: zamach lufą robi cały kadłub (obrót na gąsienicach).
@@ -468,7 +473,7 @@ function moveTargets(f: FighterState, t: TankParams, rest: Targets): Targets {
     spin = true;
   }
   return {
-    yaw: k.yaw === null || casemate ? rest.yaw : f.moveBaseYaw + k.yaw * sign,
+    yaw: k.yaw === null || casemate ? rest.yaw : f.moveBaseYaw + k.yaw * sign + (following ? Math.sign(f.turretVel) * FOLLOW_YAW : 0),
     pitch: clamp(k.pitch === null ? rest.pitch : k.pitch + rest.aimPitch, t.pitchMin, t.pitchMax),
     ext: k.ext === null ? 0 : k.ext,
     lift: k.lift === null ? (k.bodyPitch === null ? autoLift : 0) : k.lift,
@@ -547,16 +552,26 @@ function advanceMove(s: GameState, i: number, tg: Targets): void {
   }
   // Po kontakcie: dokładnie zaplanowane wybrzmienie (przewaga klatkowa). Po pudle – pełne.
   if (f.contactRecover > 0) {
+    if (f.follow > 0) f.follow--;
     if (--f.contactRecover === 0) endMove(f);
     return;
   }
   if (f.keyFrame * t.kickScale >= m.def.recoveryPad * 1000) endMove(f);
 }
 
+/** Puszczenie tyczki: pęd z obrotu, ale w rozsądnych granicach (inaczej czołg odlatuje). */
+function releasePlant(f: FighterState): void {
+  if (!f.planted) return;
+  f.planted = 0;
+  f.vx = clamp(f.vx, -300, 300);
+  f.vz = clamp(f.vz, -300, 300);
+  f.vy = clamp(f.vy, -200, 380);
+}
+
 function endMove(f: FighterState): void {
   const m = f.move >= 0 ? tankOf(f).moves[f.move] : undefined;
   f.move = -1;
-  f.planted = 0;
+  releasePlant(f);
   f.turretYaw = signedAngle(f.turretYaw);
   f.pivot = signedAngle(f.pivot);
   f.bodyPitch = signedAngle(f.bodyPitch);
@@ -864,9 +879,10 @@ function updateFighter(s: GameState, i: number, input: number): void {
   // Tyczka: koniec lufy stoi w miejscu, a cały czołg obraca się wokół niego.
   if (f.planted) {
     const tip = barrelTip(f, t);
-    const dx = f.plantX - tip.x;
-    const dy = f.plantY - tip.y;
-    const dz = f.plantZ - tip.z;
+    // Ograniczenie na klatkę – gwałtowny obrót nie może wystrzelić czołgu.
+    const dx = clamp(f.plantX - tip.x, -500, 500);
+    const dy = clamp(f.plantY - tip.y, -500, 500);
+    const dz = clamp(f.plantZ - tip.z, -500, 500);
     f.x += dx;
     f.z += dz;
     f.y = Math.max(0, f.y + dy);
@@ -1127,20 +1143,24 @@ function resolveHit(s: GameState, h: PendingHit): void {
     a.moveConnected = 1;
   }
   const multi = h.proj || a.hitsDone < m.maxHits;
+  const acro = m.keys.some((k) => k.plant || k.bodyPitch !== null || k.hullSpin !== null || k.untilLanding);
   // Zwykły cios (nie akrobacja ani pocisk): po kontakcie atakujący ma ściśle zaplanowane
   // wybrzmienie R, a ogłuszenie obrońcy = R + przewaga z danych ruchu.
-  const strike = !h.proj && !multi && !m.keys.some((k) => k.plant || k.bodyPitch !== null || k.untilLanding);
+  const strike = !h.proj && !multi && !acro;
   const R = strike ? Math.max(8, Math.trunc(((m.def.recoveryPad + 6) * 1000) / at.kickScale)) : 0;
   if (!multi) {
     // Trafienie wytraca pęd – lufa się odbija.
-    a.turretVel = -Math.trunc(a.turretVel / 3);
-    a.pitchVel = -Math.trunc(a.pitchVel / 3);
-    a.extVel = -Math.trunc(a.extVel / 2);
+    // Trafienie wytraca część pędu, ale zamach leci dalej (follow-through) – bez odbicia lufy.
+    a.turretVel = Math.trunc((a.turretVel * 55) / 100);
+    a.pitchVel = Math.trunc((a.pitchVel * 55) / 100);
+    a.extVel = Math.trunc(a.extVel / 2);
     if (strike) {
+      a.followKey = a.moveKey;
+      a.follow = Math.trunc((R * 55) / 100);
       a.moveKey = m.keys.length + 1;
       a.keyFrame = 0;
       a.contactRecover = R;
-    } else if (a.move >= 0 && m.keys[a.moveKey]?.active && !m.keys[a.moveKey]!.untilLanding) {
+    } else if (!acro && a.move >= 0 && m.keys[a.moveKey]?.active && !m.keys[a.moveKey]!.untilLanding) {
       a.moveKey = m.keys.length;
       a.keyFrame = 0;
     }
@@ -1183,7 +1203,9 @@ function resolveHit(s: GameState, h: PendingHit): void {
     const jug = Math.max(250, 1000 - d.juggleCount * 150);
     const base = m.launch > 0 ? m.launch : JUGGLE_LIFT;
     const lift = Math.trunc((((base * massFactor) / 1000) * jug) / 1000);
-    d.vy = m.launch > 0 ? lift : Math.max(d.vy + Math.trunc(lift / 2), lift);
+    // Żonglerka nie sumuje prędkości – i nigdy nie wyrzuca wyżej niż JUGGLE_MAX_HEIGHT.
+    const cap = Math.max(60, isqrt(2 * GRAVITY * Math.max(0, JUGGLE_MAX_HEIGHT - d.y)));
+    d.vy = Math.min(m.launch > 0 ? lift : Math.max(d.vy, lift), cap);
     // W powietrzu odrzut jest mocniejszy – przeciwnik leci do tyłu.
     kb = Math.trunc((kb * 3) / 2) + Math.trunc((40 * massFactor) / 1000);
     d.juggleCount++;
@@ -1200,7 +1222,7 @@ function resolveHit(s: GameState, h: PendingHit): void {
   }
   d.blockStreak = 0;
   d.crouching = 0;
-  d.planted = 0;
+  releasePlant(d);
   const [, perp] = axisVel(d, aim);
   setAxisVel(d, aim, kb, perp);
   d.suspVel += Math.trunc(kb / 2);

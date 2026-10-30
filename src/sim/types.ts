@@ -244,6 +244,9 @@ export interface FighterState {
   bufTimer: number;
   /** Pozostałe wybrzmienie po kontakcie ciosu (klatki) – podstawa przewagi klatkowej. */
   contactRecover: number;
+  /** Dokończenie zamachu po trafieniu: ile klatek jeszcze i według której fazy ruchu. */
+  follow: number;
+  followKey: number;
   /** Przeładowanie działa (klatki). */
   reload: number;
   /** Ile ciosów z rzędu zostało zablokowanych (rosnące odepchnięcie). */
