@@ -72,7 +72,7 @@ export class App {
   private dummy = 0;
   private settings = loadSettings();
   private fdPanel: HTMLElement | null = null;
-  private showFd = true;
+  private showFd = false;
   private pauseMenu: HTMLElement | null = null;
   private seedCounter = 1;
   private showNet = false;
@@ -362,11 +362,19 @@ export class App {
       ['Unik w głąb', 'B', 'Num 1'],
       ['Unik do kamery', 'M', 'Num 3'],
     ];
-    const moves = MOVES.map((m) => {
+    const label = (id: string, depth = 0): string => {
+      const m = MOVES.find((x) => x.id === id)!;
+      if (m.chainOnly && depth < 4) {
+        const parent = MOVES.find((p) => p.chains?.some((c) => c.to === id));
+        const link = parent?.chains?.find((c) => c.to === id);
+        if (parent && link) return `${label(parent.id, depth + 1)}, ${link.button}`;
+      }
       const seq = m.input.sequence.map((d) => ({ D: 'dół', B: 'tył', F: 'przód', U: 'góra' } as Record<string, string>)[d] ?? d);
       const st = m.stance.includes('air') && !m.stance.includes('stand') ? 'w skoku + ' : '';
-      return h('tr', {}, h('td', {}, m.name), h('td', {}, st + [...seq, m.input.button].join(' + ')), h('td', {}, m.desc));
-    });
+      return st + [...seq, m.input.button].join(' + ');
+    };
+    const moves = MOVES.map((m) =>
+      h('tr', {}, h('td', {}, m.name), h('td', {}, label(m.id)), h('td', {}, m.desc)));
     const back = h('button', { class: 'back-btn' }, '← Menu (Esc)');
     back.addEventListener('click', () => this.showMenu());
     const root = h('div', { class: 'screen help' },

@@ -31,12 +31,25 @@ export function barrelDir(f: FighterState): Point3 {
   return { x: trigMul(icos(yaw), cp), y: isin(pitch), z: trigMul(isin(yaw), cp) };
 }
 
+/** Odległość czopów lufy (osi elewacji) od osi wieży – jarzmo jest z przodu wieży. */
+export function trunnionOffset(t: TankParams): number {
+  return Math.trunc((t.turretRadius * 8) / 10);
+}
+
+/** Czopy lufy: przód wieży, na wysokości jej środka. */
+export function trunnion(f: FighterState, t: TankParams): Point3 {
+  const p = turretPivot(f, t);
+  const yaw = f.hullYaw + f.pivot + f.turretYaw;
+  const o = trunnionOffset(t);
+  return { x: p.x + trigMul(o, icos(yaw)), y: p.y, z: p.z + trigMul(o, isin(yaw)) };
+}
+
 /** Punkty próbkowania kapsuły lufy (od jarzma do wylotu). */
 export function barrelPoints(f: FighterState, t: TankParams, count = 6): Point3[] {
-  const p = turretPivot(f, t);
+  const p = trunnion(f, t);
   const d = barrelDir(f);
-  const start = Math.trunc((t.turretRadius * 8) / 10);
-  const end = t.turretRadius + t.barrelLength + f.ext;
+  const start = Math.trunc(t.turretRadius / 5);
+  const end = start + t.barrelLength + f.ext;
   const pts: Point3[] = [];
   for (let i = 0; i < count; i++) {
     const s = start + Math.trunc(((end - start) * i) / (count - 1));

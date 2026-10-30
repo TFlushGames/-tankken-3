@@ -80,6 +80,32 @@ export function camoTexture(colors: [string, string, string], seed: number): THR
   return toTexture(c);
 }
 
+/** Kamuflaż komiksowy: dwie barwy, duże plamy o ostrych krawędziach, jasne krawędzie paneli. */
+export function toonCamoTexture(base: string, patch: string, seed: number): THREE.CanvasTexture {
+  const size = 256;
+  const [c, g] = makeCanvas(size);
+  const img = g.createImageData(size, size);
+  const b = new THREE.Color(base);
+  const p = new THREE.Color(patch);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      const n = valueNoise(u * 3, v * 3, seed, 2);
+      const col = n > 0.56 ? p : b;
+      const i = (y * size + x) * 4;
+      img.data[i] = col.r * 255;
+      img.data[i + 1] = col.g * 255;
+      img.data[i + 2] = col.b * 255;
+      img.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = toTexture(c);
+  t.magFilter = THREE.NearestFilter;
+  return t;
+}
+
 /** Szorstkość: zabrudzenia i rysy. */
 export function grimeTexture(seed: number): THREE.CanvasTexture {
   const size = 128;

@@ -7,6 +7,17 @@ Miejsca, w których specyfikacja zostawiała wybór, i co wybrano.
 - **Gra online (etap 5) nie jest jeszcze zrobiona**. Symulacja jest od początku deterministyczna i ma snapshot/restore oraz hash, więc rollback da się dołożyć bez przebudowy. GitHub Pages hostuje tylko pliki statyczne, więc serwer WebSocket trafi na Render/Railway/Fly.io.
 - Druga arena (zimowy poligon) jest dostępna w wyborze czołgu (Tab).
 
+## Tempo i kombo (wersja 2)
+- Na prośbę o większą dynamikę prędkości jazdy, maks. prędkości wieży/lufy i przyspieszenia zostały podniesione względem tabeli startowej (MAMUT jest nadal najwolniejszy, OSA najszybsza – proporcje zachowane). `ACCEL_SCALE = 3`, `HOLD_SCALE = 0.5`, grawitacja 30 mm/kl² (krótsze, ostrzejsze skoki).
+- **Łańcuchy kombo**: każdy ruch może mieć `chains` – ten sam (lub inny) przycisk wciśnięty w trakcie ataku jest buforowany i od pierwszej aktywnej fazy ruch przechodzi w kolejny. Wieża zachowuje pęd, więc np. zamach zwrotny startuje z końca poprzedniego zamachu. Łańcuch działa także po pudle – „walenie w przycisk” zawsze daje płynną sekwencję.
+- Ruchy `chainOnly` są dostępne tylko jako kontynuacje.
+- **Wyrzut**: podbicie i „wjazd na rampę” wyrzucają wysoko (lżejszy czołg leci wyżej) i do tyłu; trafienie w powietrzu podbija ponownie (malejąco) i mocniej odrzuca; mocny upadek daje jedno odbicie od ziemi.
+- **Przechyły**: ataki mają mocniejsze uniesienie/opuszczenie przodu kadłuba (pancerny zrzut nurkuje nosem ~28°). Pochylenie w locie i salto po wyrzucie liczy renderer z prędkości i stanu – nie wpływa na symulację.
+- **Lufa**: oś elewacji (czopy) jest z przodu wieży, a lufa wysuwa się teleskopowo z kołyski przymocowanej do jarzma – w symulacji i w modelu, więc lufa nigdy nie odstaje od wieży.
+
+## Grafika (wersja 2)
+- Styl komiksowy inspirowany ogólnie „szalonymi” grami akcji: cieniowanie toon (4 progi), czarne kontury metodą odwróconej skorupy z wygładzonymi normalnymi, nasycone kolory z akcentami, gwiazdy uderzeń, napisy komiksowe, smugi ciosów, błysk ekranu i „kopnięcie” FOV przy mocnych trafieniach. Żadne zasoby ani projekty innych gier nie są kopiowane.
+
 ## Symulacja
 - Jednostki: 1 = 1 mm, kąty w setnych stopnia (36000 = pełny obrót), sin/cos z tablicy skalowanej przez 16384, atan2 z tablicy 1024 kroków.
 - Tablice trygonometryczne są generowane przy starcie przez `Math.sin`/`Math.atan` i **zaokrąglane do liczb całkowitych**. Różnice ostatniego bitu między przeglądarkami nie przeżywają zaokrąglenia, więc wynik jest identyczny. Liczby zmiennoprzecinkowe występują tylko w `src/sim/params.ts` przy kompilacji danych i też są zaokrąglane.

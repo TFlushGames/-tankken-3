@@ -2,19 +2,22 @@
 // Liczby zmiennoprzecinkowe pojawiają się WYŁĄCZNIE tutaj i są od razu zaokrąglane.
 import { MOVES } from '../data/moves';
 import { TANKS } from '../data/tanks';
+import { BUTTON_BITS } from './input';
 import type { MoveDef, TankDef } from './types';
 
 /**
  * Skala gry: przyspieszenia z tabeli czołgów są „realistyczne”; mnożnik ten przenosi je
  * do fantastycznej skali bijatyki (patrz DECISIONS.md). Proporcje między czołgami zostają.
  */
-export const ACCEL_SCALE = 1.0;
+export const ACCEL_SCALE = 3.0;
 /** Grawitacja (mm/klatkę²). */
-export const GRAVITY = 18;
+export const GRAVITY = 30;
 export const REF_MASS = 35000; // kg
 /** Przyspieszenie kątowe kadłuba (°/s²) dla masy referencyjnej 35 t. */
-export const BODY_ACCEL = 2200;
-export const BODY_MAX_VEL = 480;
+export const BODY_ACCEL = 6000;
+export const BODY_MAX_VEL = 900;
+/** Globalne skrócenie faz „przytrzymania” – tempo gry. */
+export const HOLD_SCALE = 0.5;
 
 const mm = (m: number): number => Math.round(m * 1000);
 const cd = (deg: number): number => Math.round(deg * 100);
@@ -46,7 +49,12 @@ export interface CompiledMove {
   maxHits: number;
   rehit: number;
   radius: number;
+  /** Indeks pierwszej aktywnej klatki kluczowej – od niej można przejść do następnego ciosu. */
+  cancelKey: number;
+  chains: { bit: number; dir: CompiledChainDir; to: number }[];
 }
+
+export type CompiledChainDir = import('./input').RelDir | null;
 
 export interface TankParams {
   def: TankDef;
@@ -100,6 +108,8 @@ function compileMove(def: MoveDef, index: number, tank: TankDef, kickScale: numb
     maxHits: m.maxHits ?? 1,
     rehit: m.rehit ?? 0,
     radius: mm(m.radius ?? tank.barrelRadius),
+    cancelKey: Math.max(0, m.keys.findIndex((k) => k.active)),
+    chains: (m.chains ?? []).map((c) => ({ bit: BUTTON_BITS[c.button], dir: c.dir ?? null, to: MOVES.findIndex((x) => x.id === c.to) })),
     keys: m.keys.map((k) => ({
       yaw: k.yaw === undefined ? null : cd(k.yaw),
       pitch: k.pitch === undefined ? null : cd(Math.max(tank.pitchMin, Math.min(tank.pitchMax, k.pitch))),
@@ -109,7 +119,7 @@ function compileMove(def: MoveDef, index: number, tank: TankDef, kickScale: numb
       impulse: Math.round((mm(perFrame(k.impulse ?? 0)) * kickScale) / 1000),
       vyImpulse: mm(perFrame(k.vyImpulse ?? 0)),
       active: k.active ?? false,
-      hold: Math.round((k.hold ?? 0) * inertia),
+      hold: Math.round((k.hold ?? 0) * inertia * HOLD_SCALE),
       timeout: k.timeout ?? 30,
       untilLanding: k.untilLanding ?? false,
       slam: k.slam ?? k.active ?? false,

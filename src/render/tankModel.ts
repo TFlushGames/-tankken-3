@@ -1,11 +1,17 @@
-// Proceduralne modele czołgów. Hierarchia: korzeń → podwozie (gąsienice, koła) + kadłub
-// (zawieszenie, uniesienie) → wieża (yaw) → jarzmo (pitch) → lufa (wysunięcie).
+// Proceduralne modele czołgów w stylu komiksowym (toon + kontury).
+// Hierarchia: korzeń → salto (obrót wokół środka) → podwozie (gąsienice, koła) + kadłub
+// (zawieszenie, uniesienie) → wieża (yaw) → jarzmo na czopach z przodu wieży (pitch)
+// → lufa wysuwana teleskopowo z kołyski (wysunięcie).
 import * as THREE from 'three';
 import type { TankDef } from '../sim/types';
-import { camoTexture, grimeTexture, numberTexture } from './textures';
+import { addOutlines, toonMat } from './toon';
+import { numberTexture, toonCamoTexture } from './textures';
 
 export interface TankStyle {
-  camo: [string, string, string];
+  base: string;
+  patch: string;
+  accent: string;
+  alt: [string, string, string];
   number: string;
   numberColor: string;
   roadWheels: number;
@@ -18,9 +24,12 @@ export interface TankStyle {
 
 export const TANK_STYLES: Record<string, TankStyle> = {
   mamut: {
-    camo: ['#626a45', '#40462c', '#86724a'],
+    base: '#6f7d3c',
+    patch: '#4c5a2a',
+    accent: '#ffc226',
+    alt: ['#8a4b3a', '#5e2f25', '#f0e6c8'],
     number: '701',
-    numberColor: '#e8e2c8',
+    numberColor: '#ffe9a8',
     roadWheels: 7,
     skirts: true,
     spacedArmor: true,
@@ -29,9 +38,12 @@ export const TANK_STYLES: Record<string, TankStyle> = {
     turretShape: 'wedge',
   },
   grom: {
-    camo: ['#6b6a3c', '#8a7a4a', '#3f4128'],
+    base: '#3d86b8',
+    patch: '#2b6390',
+    accent: '#f4f1e6',
+    alt: ['#b8463a', '#86302a', '#ffd23a'],
     number: '214',
-    numberColor: '#f2f0e0',
+    numberColor: '#ffffff',
     roadWheels: 5,
     skirts: true,
     spacedArmor: false,
@@ -40,9 +52,12 @@ export const TANK_STYLES: Record<string, TankStyle> = {
     turretShape: 'hex',
   },
   osa: {
-    camo: ['#59656b', '#3b4448', '#8b9496'],
+    base: '#ee7a2a',
+    patch: '#c85a1a',
+    accent: '#1c1c22',
+    alt: ['#7a5ac8', '#5a3ea0', '#fff16a'],
     number: '07',
-    numberColor: '#ffd23a',
+    numberColor: '#1c1c22',
     roadWheels: 4,
     skirts: false,
     spacedArmor: false,
@@ -52,14 +67,8 @@ export const TANK_STYLES: Record<string, TankStyle> = {
   },
 };
 
-/** Wariant kolorystyczny gracza 2 w lustrzanym pojedynku. */
-const ALT_CAMO: Record<string, [string, string, string]> = {
-  mamut: ['#7a6a4a', '#4e3f2a', '#a08a60'],
-  grom: ['#5d6e7a', '#3a4650', '#8a9aa2'],
-  osa: ['#7a3a2a', '#4a2a20', '#b06a3a'],
-};
-
 const LINK_PITCH = 0.17;
+const OUTLINE = 0.035;
 
 interface Track {
   mesh: THREE.InstancedMesh;
@@ -70,6 +79,9 @@ interface Track {
 
 export class TankModel {
   readonly root = new THREE.Group();
+  /** Grupa obracana przy saltach – oś obrotu w połowie wysokości kadłuba. */
+  readonly spin = new THREE.Group();
+  private readonly inner = new THREE.Group();
   readonly chassis = new THREE.Group();
   readonly body = new THREE.Group();
   readonly turret = new THREE.Group();
@@ -77,7 +89,10 @@ export class TankModel {
   readonly barrel = new THREE.Group();
   readonly def: TankDef;
   readonly skirts: THREE.Mesh[] = [];
-  readonly materials: THREE.MeshStandardMaterial[] = [];
+  readonly materials: THREE.MeshToonMaterial[] = [];
+  /** Punkty końca lufy w układzie lufy (do smugi ciosu). */
+  readonly tipLocal: THREE.Vector3;
+  readonly midLocal: THREE.Vector3;
   private tracks: Track[] = [];
   private wheels: { mesh: THREE.Object3D; side: number; radius: number; baseY: number; phase: number }[] = [];
   private readonly trackR: number;
@@ -105,16 +120,21 @@ export class TankModel {
     this.trackA = L / 2 - this.trackR - 0.05;
     this.trackLen = 4 * this.trackA + 2 * Math.PI * this.trackR;
 
-    const camo = camoTexture(alt ? ALT_CAMO[def.id]! : st.camo, def.id.length * 13 + (alt ? 5 : 0));
-    const rough = grimeTexture(7);
-    const armor = this.mat({ map: camo, roughnessMap: rough, roughness: 0.75, metalness: 0.35 });
-    const dark = this.mat({ color: 0x2a2a26, roughness: 0.85, metalness: 0.4 });
-    const steel = this.mat({ color: 0x55574f, roughness: 0.55, metalness: 0.7 });
-    const rubber = this.mat({ color: 0x1a1a18, roughness: 0.95, metalness: 0.1 });
-    const trackMat = this.mat({ color: 0x3a3833, roughness: 0.8, metalness: 0.6 });
+    const [base, patch, accentCol] = alt ? st.alt : [st.base, st.patch, st.accent];
+    const camo = toonCamoTexture(base, patch, def.id.length * 13 + (alt ? 5 : 0));
+    const armor = this.mat({ map: camo });
+    const accent = this.mat({ color: accentCol });
+    const dark = this.mat({ color: 0x2b2b30 });
+    const steel = this.mat({ color: 0x6b6e78 });
+    const rubber = this.mat({ color: 0x1e1e22 });
+    const trackMat = this.mat({ color: 0x3c3a40 });
 
-    this.root.add(this.chassis);
-    this.root.add(this.body);
+    this.root.add(this.spin);
+    this.spin.position.y = H / 2;
+    this.spin.add(this.inner);
+    this.inner.position.y = -H / 2;
+    this.inner.add(this.chassis);
+    this.inner.add(this.body);
 
     // --- kadłub dolny (między gąsienicami)
     const lowerW = W - trackW * 2;
@@ -137,7 +157,15 @@ export class TankModel {
     upper.lineTo(-L / 2 + 0.35, top);
     upper.lineTo(-L / 2, top - 0.25);
     upper.closePath();
-    this.addExtrude(upper, W, armor, this.body, 0.04);
+    this.addExtrude(upper, W, armor, this.body, 0.05);
+
+    // Pas w kolorze akcentu na przedniej płycie.
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.03, W * 0.98), accent);
+    const ga = Math.atan2(top - trackH - 0.08, glacis);
+    stripe.position.set(L / 2 - glacis * 0.45, trackH + (top - trackH) * 0.55 + 0.02, 0);
+    stripe.rotation.z = ga;
+    stripe.userData['noOutline'] = true;
+    this.body.add(stripe);
 
     // Płyta silnika z kratkami.
     const deck = new THREE.Mesh(new THREE.BoxGeometry(L * 0.28, 0.05, W * 0.6), dark);
@@ -147,6 +175,7 @@ export class TankModel {
     for (let i = 0; i < 5; i++) {
       const slat = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, W * 0.55), steel);
       slat.position.set(-L / 2 + L * 0.1 + i * L * 0.045, top + 0.06, 0);
+      slat.userData['noOutline'] = true;
       this.body.add(slat);
     }
     // Rury wydechowe.
@@ -162,7 +191,7 @@ export class TankModel {
     // Skrzynki, liny holownicze, reflektory.
     const boxGeo = new THREE.BoxGeometry(L * 0.18, 0.22, 0.3);
     for (const side of [-1, 1]) {
-      const b = new THREE.Mesh(boxGeo, armor);
+      const b = new THREE.Mesh(boxGeo, accent);
       b.position.set(-L * 0.1, top + 0.11, side * (W / 2 - 0.2));
       this.body.add(b);
       const cable = new THREE.Mesh(
@@ -176,15 +205,17 @@ export class TankModel {
         ),
         steel,
       );
+      cable.userData['noOutline'] = true;
       this.body.add(cable);
-      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.1, 10), steel);
+      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.1, 12), this.mat({ color: 0xfff1b0, emissive: 0xffd060, emissiveIntensity: 0.6 }));
       lamp.rotation.z = Math.PI / 2;
       lamp.position.set(L / 2 - glacis * 0.55, (trackH + top) / 2 + 0.12, side * (W / 2 - 0.35));
+      lamp.userData['noOutline'] = true;
       this.body.add(lamp);
     }
 
     // Nity na krawędziach płyt (instancing).
-    const rivetGeo = new THREE.SphereGeometry(0.025, 6, 4);
+    const rivetGeo = new THREE.SphereGeometry(0.03, 6, 4);
     const rivetCount = Math.floor(L / 0.22) * 2;
     const rivets = new THREE.InstancedMesh(rivetGeo, steel, rivetCount);
     let ri = 0;
@@ -204,9 +235,8 @@ export class TankModel {
       const sh = trackH * (st.spacedArmor ? 0.75 : 0.55);
       for (const side of [-1, 1]) {
         for (let i = 0; i < segs; i++) {
-          const sk = new THREE.Mesh(new THREE.BoxGeometry(segL - 0.04, sh, 0.04), armor);
-          sk.position.set(-L / 2 + 0.15 + segL * (i + 0.5), trackH - sh / 2 + 0.02, side * (W / 2 + 0.03));
-          sk.castShadow = true;
+          const sk = new THREE.Mesh(new THREE.BoxGeometry(segL - 0.05, sh, 0.05), i % 2 ? armor : accent);
+          sk.position.set(-L / 2 + 0.15 + segL * (i + 0.5), trackH - sh / 2 + 0.02, side * (W / 2 + 0.04));
           this.body.add(sk);
           this.skirts.push(sk);
         }
@@ -214,29 +244,29 @@ export class TankModel {
     }
 
     // --- gąsienice i koła
-    const linkGeo = new THREE.BoxGeometry(LINK_PITCH * 0.86, 0.06, trackW);
+    const linkGeo = new THREE.BoxGeometry(LINK_PITCH * 0.86, 0.07, trackW);
     const count = Math.floor(this.trackLen / LINK_PITCH);
     for (const side of [-1, 1]) {
       const mesh = new THREE.InstancedMesh(linkGeo, trackMat, count);
-      mesh.castShadow = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.position.z = side * (W / 2 - trackW / 2);
       this.chassis.add(mesh);
       this.tracks.push({ mesh, side, offset: 0, count });
-      // Prowadnice na ogniwach.
       const z = side * (W / 2 - trackW / 2);
       const rw = st.roadWheels;
       const wr = this.trackR * 0.78;
       const wheelGeo = new THREE.CylinderGeometry(wr, wr, trackW * 0.8, 18);
       wheelGeo.rotateX(Math.PI / 2);
-      const hubGeo = new THREE.CylinderGeometry(wr * 0.35, wr * 0.35, trackW * 0.85, 8);
+      const hubGeo = new THREE.CylinderGeometry(wr * 0.4, wr * 0.4, trackW * 0.86, 8);
       hubGeo.rotateX(Math.PI / 2);
       for (let i = 0; i < rw; i++) {
         const x = -this.trackA + 0.15 + ((2 * this.trackA - 0.3) * i) / (rw - 1);
         const g = new THREE.Group();
         const w = new THREE.Mesh(wheelGeo, rubber);
-        const hub = new THREE.Mesh(hubGeo, steel);
-        const spoke = new THREE.Mesh(new THREE.BoxGeometry(wr * 1.5, 0.05, trackW * 0.86), steel);
+        const hub = new THREE.Mesh(hubGeo, accent);
+        hub.userData['noOutline'] = true;
+        const spoke = new THREE.Mesh(new THREE.BoxGeometry(wr * 1.5, 0.06, trackW * 0.88), steel);
+        spoke.userData['noOutline'] = true;
         g.add(w, hub, spoke);
         g.position.set(x, wr + 0.04, z);
         this.chassis.add(g);
@@ -271,22 +301,22 @@ export class TankModel {
     const th = def.turretHeight;
     const ts = new THREE.Shape();
     if (st.turretShape === 'wedge') {
-      ts.moveTo(r * 1.05, -r * 0.45);
-      ts.lineTo(r * 1.05, r * 0.45);
+      ts.moveTo(r * 1.0, -r * 0.5);
+      ts.lineTo(r * 1.0, r * 0.5);
       ts.lineTo(r * 0.2, r * 0.95);
       ts.lineTo(-r * 1.25, r * 0.85);
       ts.lineTo(-r * 1.35, -r * 0.85);
       ts.lineTo(r * 0.2, -r * 0.95);
     } else if (st.turretShape === 'hex') {
-      ts.moveTo(r * 0.95, -r * 0.35);
-      ts.lineTo(r * 0.95, r * 0.35);
+      ts.moveTo(r * 0.92, -r * 0.42);
+      ts.lineTo(r * 0.92, r * 0.42);
       ts.lineTo(r * 0.25, r * 0.9);
       ts.lineTo(-r * 0.9, r * 0.75);
       ts.lineTo(-r * 1.0, -r * 0.75);
       ts.lineTo(r * 0.25, -r * 0.9);
     } else {
-      ts.moveTo(r * 0.9, -r * 0.5);
-      ts.lineTo(r * 0.9, r * 0.5);
+      ts.moveTo(r * 0.9, -r * 0.55);
+      ts.lineTo(r * 0.9, r * 0.55);
       ts.lineTo(-r * 0.8, r * 0.8);
       ts.lineTo(-r * 0.9, -r * 0.8);
     }
@@ -299,15 +329,17 @@ export class TankModel {
       bevelSegments: 2,
     });
     tGeo.rotateX(-Math.PI / 2);
-    const tMesh = new THREE.Mesh(tGeo, armor);
-    tMesh.castShadow = true;
-    tMesh.receiveShadow = true;
-    this.turret.add(tMesh);
-    // Pierścień wieży.
+    this.turret.add(new THREE.Mesh(tGeo, armor));
+    // Pas akcentu dookoła wieży.
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.93, r * 0.93, 0.1, 24), accent);
+    band.position.set(-r * 0.1, th * 0.25, 0);
+    band.scale.set(1.04, 1, 0.97);
+    band.userData['noOutline'] = true;
+    this.turret.add(band);
     const ring = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.85, r * 0.9, 0.1, 24), dark);
     ring.position.y = 0.03;
     this.turret.add(ring);
-    // Włazy i peryskopy.
+    // Właz, wieżyczka dowódcy, peryskopy, antena, kosz.
     const hatch = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.25, r * 0.27, 0.08, 14), armor);
     hatch.position.set(-r * 0.3, th + 0.04, r * 0.3);
     this.turret.add(hatch);
@@ -315,86 +347,103 @@ export class TankModel {
     cupola.position.set(-r * 0.35, th + 0.11, -r * 0.35);
     this.turret.add(cupola);
     for (let i = 0; i < 5; i++) {
-      const p = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.08), dark);
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.08), this.mat({ color: 0x9ad8ff, emissive: 0x2a6080 }));
       const a = (i / 5) * Math.PI * 2;
       p.position.set(-r * 0.35 + Math.cos(a) * r * 0.22, th + 0.2, -r * 0.35 + Math.sin(a) * r * 0.22);
       this.turret.add(p);
     }
-    // Antena.
-    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.015, 2.2, 4), dark);
+    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 2.2, 4), dark);
     ant.position.set(-r * 0.95, th + 1.1, r * 0.55);
+    ant.userData['noOutline'] = true;
     this.turret.add(ant);
-    // Kosz na wieży.
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.22), this.mat({ color: accentCol, side: THREE.DoubleSide }));
+    flag.position.set(-r * 0.95 - 0.2, th + 2.05, r * 0.55);
+    flag.userData['noOutline'] = true;
+    this.turret.add(flag);
     const bustle = new THREE.Mesh(new THREE.BoxGeometry(r * 0.5, th * 0.45, r * 1.3), dark);
     bustle.position.set(-r * 1.2, th * 0.45, 0);
     this.turret.add(bustle);
-    // Numery taktyczne.
     const numTex = numberTexture(st.number, st.numberColor);
-    const numMat = new THREE.MeshStandardMaterial({ map: numTex, transparent: true, roughness: 0.8, depthWrite: false });
-    this.materials.push(numMat);
+    const numMat = new THREE.MeshBasicMaterial({ map: numTex, transparent: true, depthWrite: false });
     for (const side of [-1, 1]) {
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(r * 0.9, r * 0.45), numMat);
-      plane.position.set(-r * 0.35, th * 0.5, side * (r * 0.83 + 0.11));
+      plane.position.set(-r * 0.35, th * 0.55, side * (r * 0.83 + 0.11));
       plane.rotation.y = side > 0 ? 0 : Math.PI;
-      plane.rotation.x = 0;
       this.turret.add(plane);
     }
 
-    // --- jarzmo i lufa
-    this.mantlet.position.set(0, th / 2, 0);
+    // --- jarzmo na czopach z przodu wieży (zgodnie z geometrią symulacji)
+    const trunnion = r * 0.8;
+    this.mantlet.position.set(trunnion, th / 2, 0);
     this.turret.add(this.mantlet);
-    const mant = new THREE.Mesh(new THREE.BoxGeometry(0.45, th * 0.8, st.turretShape === 'small' ? r * 1.2 : r * 0.9), armor);
-    mant.position.set(r * 0.95, 0, 0);
-    mant.castShadow = true;
-    this.mantlet.add(mant);
-    this.mantlet.add(this.barrel);
+    const twin = def.twinBarrels;
+    // Osłona jarzma – zaokrąglony blok obracający się z lufą, zasłania otwór w wieży.
+    const shieldW = twin ? r * 1.25 : r * 0.85;
+    const shieldGeo = new THREE.CylinderGeometry(th * 0.42, th * 0.42, shieldW, 16);
+    shieldGeo.rotateX(Math.PI / 2);
+    const shield = new THREE.Mesh(shieldGeo, armor);
+    shield.position.x = -0.02;
+    this.mantlet.add(shield);
     const len = def.barrelLength;
-    const br = def.barrelRadius * 0.55;
-    const barrels = def.twinBarrels ? [-r * 0.35, r * 0.35] : [0];
+    const br = def.barrelRadius * 0.6;
+    const start = r * 0.2;
+    const ext = def.extRange;
+    const barrels = twin ? [-r * 0.35, r * 0.35] : [0];
     for (const z of barrels) {
-      const tube = new THREE.Mesh(new THREE.CylinderGeometry(br * 0.85, br, len, 14), steel);
+      // Kołyska (stała względem jarzma) – w niej przesuwa się lufa, więc nigdy nie odstaje.
+      const cradleLen = start + ext + 0.35;
+      const cradle = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.65, br * 1.8, cradleLen, 14), armor);
+      cradle.rotation.z = -Math.PI / 2;
+      cradle.position.set(cradleLen / 2, 0, z);
+      this.mantlet.add(cradle);
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.9, br * 1.9, 0.1, 14), accent);
+      collar.rotation.z = -Math.PI / 2;
+      collar.position.set(cradleLen - 0.05, 0, z);
+      collar.userData['noOutline'] = true;
+      this.mantlet.add(collar);
+      // Lufa: od wnętrza kołyski do wylotu (wylot = start + długość, jak w symulacji).
+      const tubeLen = len + 0.3;
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(br * 0.85, br, tubeLen, 14), steel);
       tube.rotation.z = -Math.PI / 2;
-      tube.position.set(r + len / 2, 0, z);
-      tube.castShadow = true;
+      tube.position.set(start + len - tubeLen / 2, 0, z);
       this.barrel.add(tube);
-      // Osłona mechanizmu odrzutu.
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.5, br * 1.5, len * 0.22, 14), armor);
-      sleeve.rotation.z = -Math.PI / 2;
-      sleeve.position.set(r + len * 0.11, 0, z);
-      this.barrel.add(sleeve);
       if (st.fumeExtractor) {
-        const fe = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.6, br * 1.6, len * 0.12, 14), steel);
+        const fe = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.6, br * 1.6, len * 0.12, 14), dark);
         fe.rotation.z = -Math.PI / 2;
-        fe.position.set(r + len * 0.55, 0, z);
+        fe.position.set(start + len * 0.55, 0, z);
         this.barrel.add(fe);
       }
       if (st.muzzleBrake !== 'none') {
         const s = st.muzzleBrake === 'big' ? 1.0 : 0.75;
         const mb = new THREE.Mesh(new THREE.BoxGeometry(len * 0.07, br * 2.6 * s, br * 3.2 * s), dark);
-        mb.position.set(r + len - len * 0.02, 0, z);
+        mb.position.set(start + len - len * 0.03, 0, z);
         this.barrel.add(mb);
         const mb2 = mb.clone();
         mb2.position.x -= len * 0.06;
         this.barrel.add(mb2);
       } else {
-        // Osłona lufy karabinu z otworami.
-        const jacket = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.4, br * 1.4, len * 0.5, 8, 1, true), dark);
+        const jacket = new THREE.Mesh(new THREE.CylinderGeometry(br * 1.4, br * 1.4, len * 0.45, 8), dark);
         jacket.rotation.z = -Math.PI / 2;
-        jacket.position.set(r + len * 0.35, 0, z);
+        jacket.position.set(start + len * 0.5, 0, z);
         this.barrel.add(jacket);
       }
     }
+    this.mantlet.add(this.barrel);
+    this.tipLocal = new THREE.Vector3(start + len, 0, 0);
+    this.midLocal = new THREE.Vector3(start + len * 0.35, 0, 0);
 
+    addOutlines(this.inner, OUTLINE);
     this.root.traverse((o) => {
-      if (o instanceof THREE.Mesh) {
+      if (o instanceof THREE.Mesh && !o.userData['noOutline']) {
         o.castShadow = true;
         o.receiveShadow = true;
       }
+      if (o instanceof THREE.InstancedMesh) o.castShadow = true;
     });
   }
 
-  private mat(p: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
-    const m = new THREE.MeshStandardMaterial(p);
+  private mat(p: THREE.MeshToonMaterialParameters): THREE.MeshToonMaterial {
+    const m = toonMat(p);
     this.materials.push(m);
     return m;
   }
@@ -408,10 +457,7 @@ export class TankModel {
       bevelSegments: 1,
     });
     g.translate(0, 0, -(depth - bevel * 2) / 2);
-    const m = new THREE.Mesh(g, mat);
-    m.castShadow = true;
-    m.receiveShadow = true;
-    parent.add(m);
+    parent.add(new THREE.Mesh(g, mat));
   }
 
   /** Pozycja ogniwa na ścieżce gąsienicy (stadion w przekroju bocznym). */
@@ -422,25 +468,23 @@ export class TankModel {
     const arc = Math.PI * r;
     s = ((s % this.trackLen) + this.trackLen) % this.trackLen;
     if (s < straight) {
-      out.set(-a + s, 0.03, 0);
+      out.set(-a + s, 0.035, 0);
       return 0;
     }
     s -= straight;
     if (s < arc) {
-      const t = s / arc;
-      const ang = -Math.PI / 2 + t * Math.PI;
-      out.set(a + Math.cos(ang) * (r - 0.03), r + Math.sin(ang) * (r - 0.03), 0);
+      const ang = -Math.PI / 2 + (s / arc) * Math.PI;
+      out.set(a + Math.cos(ang) * (r - 0.035), r + Math.sin(ang) * (r - 0.035), 0);
       return ang + Math.PI / 2;
     }
     s -= arc;
     if (s < straight) {
-      out.set(a - s, 2 * r - 0.03, 0);
+      out.set(a - s, 2 * r - 0.035, 0);
       return Math.PI;
     }
     s -= straight;
-    const t = s / arc;
-    const ang = Math.PI / 2 + t * Math.PI;
-    out.set(-a + Math.cos(ang) * (r - 0.03), r + Math.sin(ang) * (r - 0.03), 0);
+    const ang = Math.PI / 2 + (s / arc) * Math.PI;
+    out.set(-a + Math.cos(ang) * (r - 0.035), r + Math.sin(ang) * (r - 0.035), 0);
     return ang + Math.PI / 2;
   }
 
@@ -465,7 +509,17 @@ export class TankModel {
 
   setFlash(v: number): void {
     for (const m of this.materials) {
-      m.emissive.setRGB(v * 1.0, v * 0.55, v * 0.25);
+      if (m.userData['baseEmissive'] === undefined) m.userData['baseEmissive'] = m.emissive.getHex();
+      if (v > 0.01) m.emissive.setRGB(v, v * 0.9, v * 0.8);
+      else m.emissive.setHex(m.userData['baseEmissive'] as number);
+    }
+  }
+
+  /** Przyciemnienie wraku po K.O. */
+  char(): void {
+    for (const m of this.materials) {
+      m.color.multiplyScalar(0.3);
+      if (m.map) m.color.setRGB(0.3, 0.3, 0.3);
     }
   }
 }

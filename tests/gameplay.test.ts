@@ -74,6 +74,33 @@ describe('rozgrywka', () => {
     run(s, 30, IN_LEFT);
   });
 
+  it('każdy czołg przeskakuje nad każdym z bliska', () => {
+    for (let t1 = 0; t1 < 3; t1++) {
+      for (let t2 = 0; t2 < 3; t2++) {
+        const s = fight(t1, t2);
+        run(s, 90, IN_RIGHT);
+        run(s, 70, IN_UP | IN_RIGHT);
+        run(s, 30, 0);
+        expect(s.fighters[0].facingRight, `${t1} nad ${t2}`).toBe(0);
+      }
+    }
+  });
+
+  it('podbicie wyrzuca wysoko i do tyłu', () => {
+    const s = fight();
+    run(s, 25, IN_RIGHT);
+    run(s, 10, 0);
+    const x0 = s.fighters[1].x;
+    step(s, IN_DOWN | IN_HP, 0);
+    let maxY = 0;
+    for (let i = 0; i < 60; i++) {
+      step(s, 0, 0);
+      maxY = Math.max(maxY, s.fighters[1].y);
+    }
+    expect(maxY).toBeGreaterThan(3500);
+    expect(s.fighters[1].x - x0).toBeGreaterThan(2500);
+  });
+
   it('pełny mecz kończy się zwycięzcą', () => {
     const s = createMatch(0, 2, 5);
     for (let i = 0; i < 60 * 60 * 5 && s.phase !== 3; i++) {

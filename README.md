@@ -30,6 +30,16 @@ Gracz 2 musi mieć włączony NumLock. Klawisze można zmienić w **Ustawieniach
 
 Debug: **F1** hitboxy/hurtboxy, **F3** pauza w treningu, **F4** klatka po klatce, **F6** tabela frame data, **F7** tryb manekina, **Esc** pauza.
 
+## Kombo
+
+Powtarzanie przycisku w trakcie ataku płynnie przechodzi w kolejne ciosy:
+
+- **HP, HP, HP** – zamach → zamach zwrotny → młot (przewraca); po zamachu zwrotnym **HK** = obrót 360°
+- **LP, LP, LP** – dźgnięcie → podwójne dźgnięcie → taran z dźgnięciem; dalej **HP** = młot
+- **LK, LK, LK** – wypad → szarpnięcie zwrotne → wjazd na rampę (wyrzut!); w trakcie **HP** = podbicie
+- **HK, HK, HK** – cios z góry → podwójny młot → obrót 360°
+- Po wyrzucie przeciwnika: **HP** / **LP** dalej żongluje nim w powietrzu
+
 ## Czołgi
 
 | | MAMUT | GROM | OSA |

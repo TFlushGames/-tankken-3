@@ -48,6 +48,13 @@ export interface MoveKey {
   untilLanding?: boolean;
 }
 
+/** Przejście łańcucha: przycisk (opcjonalnie z kierunkiem) w trakcie ruchu → kolejny ruch. */
+export interface ChainLink {
+  button: Button;
+  dir?: RelDir;
+  to: string;
+}
+
 export interface MoveDef {
   id: string;
   name: string;
@@ -76,6 +83,10 @@ export interface MoveDef {
   radius?: number;
   /** Opis do listy ruchów. */
   desc: string;
+  /** Kontynuacje kombo (auto-kombo przez powtarzanie przycisku). */
+  chains?: ChainLink[];
+  /** Ruch dostępny tylko jako kontynuacja łańcucha. */
+  chainOnly?: boolean;
 }
 
 /** Czołg zdefiniowany w jednostkach „ludzkich” (m, m/s, stopnie, tony). */
@@ -184,6 +195,9 @@ export interface FighterState {
   throwEX: number;
   throwEZ: number;
   idleFrames: number;
+  bounces: number;
+  chainBuf: number;
+  chainTimer: number;
   prevInput: number;
   histHead: number;
   hist: number[];

@@ -237,3 +237,196 @@ export class CameraShake {
     );
   }
 }
+
+/** Tekstura komiksowej „gwiazdy” uderzenia. */
+function starTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  g.translate(128, 128);
+  const spikes = 12;
+  g.beginPath();
+  for (let i = 0; i < spikes * 2; i++) {
+    const r = i % 2 === 0 ? 124 : 52 + Math.random() * 18;
+    const a = (i / (spikes * 2)) * Math.PI * 2;
+    g.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  g.closePath();
+  const grad = g.createRadialGradient(0, 0, 0, 0, 0, 124);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.45, 'rgba(255,240,170,1)');
+  grad.addColorStop(1, 'rgba(255,150,40,0.9)');
+  g.fillStyle = grad;
+  g.fill();
+  g.lineWidth = 6;
+  g.strokeStyle = 'rgba(20,10,10,0.9)';
+  g.stroke();
+  return new THREE.CanvasTexture(c);
+}
+
+function ringTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 128;
+  const g = c.getContext('2d')!;
+  g.strokeStyle = 'rgba(255,255,255,1)';
+  g.lineWidth = 10;
+  g.beginPath();
+  g.arc(64, 64, 52, 0, Math.PI * 2);
+  g.stroke();
+  return new THREE.CanvasTexture(c);
+}
+
+interface Flash {
+  sprite: THREE.Sprite;
+  life: number;
+  max: number;
+  size: number;
+  grow: number;
+}
+
+/** Błyski uderzeń: gwiazda + rozchodzący się pierścień (billboardy). */
+export class ImpactFX {
+  readonly group = new THREE.Group();
+  private readonly starMat: THREE.SpriteMaterial;
+  private readonly ringMat: THREE.SpriteMaterial;
+  private items: Flash[] = [];
+
+  constructor() {
+    this.starMat = new THREE.SpriteMaterial({ map: starTexture(), depthTest: false, transparent: true });
+    this.ringMat = new THREE.SpriteMaterial({ map: ringTexture(), depthTest: false, transparent: true, blending: THREE.AdditiveBlending });
+  }
+
+  spawn(p: THREE.Vector3, power: number, color?: THREE.Color): void {
+    const star = new THREE.Sprite(this.starMat.clone());
+    star.material.rotation = Math.random() * Math.PI;
+    if (color) star.material.color.copy(color);
+    star.position.copy(p);
+    star.renderOrder = 20;
+    this.group.add(star);
+    const size = 1.2 + power * 2.2;
+    this.items.push({ sprite: star, life: 0.16, max: 0.16, size, grow: 0.4 });
+    const ring = new THREE.Sprite(this.ringMat.clone());
+    if (color) ring.material.color.copy(color);
+    ring.position.copy(p);
+    ring.renderOrder = 19;
+    this.group.add(ring);
+    this.items.push({ sprite: ring, life: 0.3, max: 0.3, size: size * 0.6, grow: 3 });
+  }
+
+  update(dt: number): void {
+    for (const f of this.items) {
+      f.life -= dt;
+      const k = 1 - Math.max(0, f.life) / f.max;
+      const s = f.size * (1 + f.grow * k) * (f.grow < 1 ? Math.min(1, k * 4 + 0.3) : 1);
+      f.sprite.scale.set(s, s, 1);
+      f.sprite.material.opacity = Math.max(0, 1 - k * k);
+    }
+    this.items = this.items.filter((f) => {
+      if (f.life > 0) return true;
+      f.sprite.removeFromParent();
+      f.sprite.material.dispose();
+      return false;
+    });
+  }
+}
+
+/** Smuga za końcem lufy podczas ciosu (wstęga z ostatnich pozycji). */
+export class SwingTrail {
+  readonly mesh: THREE.Mesh;
+  private readonly n = 12;
+  private readonly tips: THREE.Vector3[] = [];
+  private readonly mids: THREE.Vector3[] = [];
+  private readonly pos: Float32Array;
+  private readonly alpha: Float32Array;
+  private fade = 0;
+
+  constructor(color: THREE.Color) {
+    this.pos = new Float32Array(this.n * 2 * 3);
+    this.alpha = new Float32Array(this.n * 2);
+    const idx: number[] = [];
+    for (let i = 0; i < this.n - 1; i++) {
+      const a = i * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aAlpha', new THREE.BufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
+    g.setIndex(idx);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: color } },
+      vertexShader: 'attribute float aAlpha; varying float vA; void main(){ vA = aAlpha; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: 'uniform vec3 uColor; varying float vA; void main(){ gl_FragColor = vec4(uColor, vA); }',
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    this.mesh = new THREE.Mesh(g, mat);
+    this.mesh.frustumCulled = false;
+  }
+
+  /** Dodaje bieżącą pozycję; `on` – czy cios jest w fazie ruchu. */
+  push(tip: THREE.Vector3, mid: THREE.Vector3, on: boolean, dt: number): void {
+    this.fade = on ? 1 : Math.max(0, this.fade - dt * 6);
+    this.tips.unshift(tip.clone());
+    this.mids.unshift(mid.clone());
+    if (this.tips.length > this.n) {
+      this.tips.pop();
+      this.mids.pop();
+    }
+    for (let i = 0; i < this.n; i++) {
+      const t = this.tips[Math.min(i, this.tips.length - 1)]!;
+      const m = this.mids[Math.min(i, this.mids.length - 1)]!;
+      this.pos.set([t.x, t.y, t.z], i * 6);
+      this.pos.set([m.x, m.y, m.z], i * 6 + 3);
+      const a = this.fade * (1 - i / this.n) * 0.45;
+      this.alpha[i * 2] = a;
+      this.alpha[i * 2 + 1] = a * 0.1;
+    }
+    this.mesh.geometry.attributes['position']!.needsUpdate = true;
+    this.mesh.geometry.attributes['aAlpha']!.needsUpdate = true;
+    this.mesh.visible = this.fade > 0.01;
+  }
+}
+
+const WORDS_HEAVY = ['BUM!', 'ŁUP!', 'TRACH!', 'BAM!', 'DZYŃ!'];
+const WORDS_LIGHT = ['PAC!', 'STUK!', 'TUP!', 'BRZĘK!'];
+
+/** Komiksowe napisy w miejscu trafień (DOM nad płótnem). */
+export class ComicText {
+  private readonly layer: HTMLDivElement;
+  constructor() {
+    this.layer = document.createElement('div');
+    this.layer.className = 'comic-layer';
+    document.body.appendChild(this.layer);
+  }
+
+  show(p: THREE.Vector3, camera: THREE.Camera, power: number, word?: string): void {
+    const v = p.clone().project(camera);
+    if (v.z > 1) return;
+    const el = document.createElement('div');
+    el.className = 'comic-word';
+    const list = power > 0.6 ? WORDS_HEAVY : WORDS_LIGHT;
+    el.textContent = word ?? list[Math.floor(Math.random() * list.length)]!;
+    el.style.left = `${(v.x * 0.5 + 0.5) * 100}%`;
+    el.style.top = `${(-v.y * 0.5 + 0.5) * 100}%`;
+    el.style.fontSize = `${28 + power * 46}px`;
+    el.style.setProperty('--rot', `${(Math.random() - 0.5) * 30}deg`);
+    this.layer.appendChild(el);
+    window.setTimeout(() => el.remove(), 650);
+  }
+
+  /** Krótki biały błysk całego ekranu przy najmocniejszych trafieniach. */
+  flash(): void {
+    const el = document.createElement('div');
+    el.className = 'screen-flash';
+    this.layer.appendChild(el);
+    window.setTimeout(() => el.remove(), 180);
+  }
+
+  clear(): void {
+    this.layer.replaceChildren();
+  }
+}

@@ -84,7 +84,7 @@ export class Hud {
       sd.run.style.width = `${(f.run / RUN_MAX) * 100}%`;
       sd.pips.forEach((p, k) => p.classList.toggle('on', f.wins > k));
       if (f.combo >= 2 && s.phase !== PH_INTRO) {
-        sd.combo.textContent = `${f.combo} TRAFIENIA`;
+        sd.combo.textContent = `${f.combo} KOMBO!`;
         sd.combo.classList.add('on');
       } else sd.combo.classList.remove('on');
     }

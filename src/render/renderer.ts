@@ -8,7 +8,8 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 import { TANKS } from '../data/tanks';
 import {
-  EV_BLOCK, EV_HIT, EV_KO, EV_LAND, EV_SHOT, EV_TECH, EV_THROW, EV_WALL, ST_KO, ST_RUN,
+  EV_BLOCK, EV_HIT, EV_KO, EV_LAND, EV_SHOT, EV_TECH, EV_THROW, EV_WALL, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_KNOCKDOWN,
+  ST_KO, ST_RUN,
 } from '../sim/constants';
 import { icos, isin } from '../sim/fixed';
 import { barrelPoints, hullFrontPoints, hullTop } from '../sim/geometry';
@@ -16,7 +17,8 @@ import { TANK_PARAMS } from '../sim/params';
 import { isMoveActive } from '../sim/step';
 import type { FighterState, GameState, SimEvent } from '../sim/types';
 import { ARENAS, Arena } from './arena';
-import { CameraShake, DebrisSystem, ParticleSystem } from './effects';
+import { CameraShake, ComicText, DebrisSystem, ImpactFX, ParticleSystem, SwingTrail } from './effects';
+import { toonify } from './toon';
 import { TankModel } from './tankModel';
 
 export interface Quality {
@@ -54,6 +56,8 @@ interface TankView {
   decals: THREE.Mesh[];
   smokeTimer: number;
   markTimer: number;
+  tumble: number;
+  trail: SwingTrail;
 }
 
 export class GameRenderer {
@@ -69,6 +73,9 @@ export class GameRenderer {
   private readonly smoke = new ParticleSystem(1500, false);
   private readonly debris: DebrisSystem;
   private readonly shake = new CameraShake();
+  private readonly impacts = new ImpactFX();
+  private readonly comic = new ComicText();
+  private fovKick = 0;
   private readonly camPos = new THREE.Vector3(0, 5, 20);
   private readonly camLook = new THREE.Vector3(0, 1, 0);
   private camAngle = 0;
@@ -96,7 +103,7 @@ export class GameRenderer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.debris = new DebrisSystem(this.scene);
-    this.scene.add(this.sparks.points, this.smoke.points, this.debugGroup);
+    this.scene.add(this.sparks.points, this.smoke.points, this.debugGroup, this.impacts.group);
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.88);
@@ -139,6 +146,7 @@ export class GameRenderer {
     if (this.arena) this.arena.dispose(this.scene);
     const def = ARENAS[index % ARENAS.length]!;
     this.arena = new Arena(def, this.scene);
+    toonify(this.arena.group);
     this.dustColor.set(def.dust);
   }
 
@@ -146,14 +154,17 @@ export class GameRenderer {
   setTanks(t1: number, t2: number): void {
     for (const v of this.views) {
       this.scene.remove(v.model.root);
+      this.scene.remove(v.trail.mesh);
     }
+    this.comic.clear();
     this.debris.clear();
     this.views = [t1, t2].map((t, i) => {
       const model = new TankModel(TANKS[t]!, i === 1 && t1 === t2);
       this.scene.add(model.root);
       return {
         model, sway: 0, swayVel: 0, roll: 0, rollVel: 0, prevAlong: 0, prevYaw: 0, prevX: 0, prevZ: 0,
-        flash: 0, destroyed: false, decals: [], smokeTimer: 0, markTimer: 0,
+        flash: 0, destroyed: false, decals: [], smokeTimer: 0, markTimer: 0, tumble: 0,
+        trail: this.makeTrail(i),
       };
     });
     this.arena?.marks.clear();
@@ -239,7 +250,11 @@ export class GameRenderer {
         this.sparks.burst(18 + power * 40, { x: p.x, y: p.y, z: p.z, life: 0.35, size: 0.12, color: new THREE.Color(1.0, 0.75, 0.35), gravity: 9, drag: 2 }, 9 + power * 8);
         this.sparks.burst(6, { x: p.x, y: p.y, z: p.z, life: 0.12, size: 0.9 + power, color: new THREE.Color(1, 0.9, 0.7) }, 0.5);
         this.smoke.burst(6, { x: p.x, y: p.y, z: p.z, life: 0.9, size: 0.5, grow: 2, color: new THREE.Color(0.3, 0.28, 0.25), gravity: -0.6, drag: 2 }, 1.5);
-        this.shake.add(0.25 + power * 0.45);
+        this.shake.add(0.3 + power * 0.6);
+        this.impacts.spawn(p, power);
+        this.fovKick = Math.max(this.fovKick, 1.5 + power * 4);
+        if (power > 0.3 || Math.random() < 0.35) this.comic.show(p, this.camera, power);
+        if (power > 0.75) this.comic.flash();
         const defender = e.actor >= 0 ? this.views[1 - e.actor] : undefined;
         if (defender) {
           defender.flash = 1;
@@ -254,6 +269,7 @@ export class GameRenderer {
       case EV_BLOCK:
         this.sparks.burst(14, { x: p.x, y: p.y, z: p.z, life: 0.25, size: 0.1, color: new THREE.Color(0.6, 0.8, 1.0), gravity: 6, drag: 3 }, 7);
         this.sparks.burst(3, { x: p.x, y: p.y, z: p.z, life: 0.1, size: 0.7, color: new THREE.Color(0.7, 0.85, 1) }, 0.3);
+        this.impacts.spawn(p, 0.15, new THREE.Color(0.6, 0.85, 1));
         this.shake.add(0.15);
         break;
       case EV_SHOT: {
@@ -334,7 +350,8 @@ export class GameRenderer {
     this.shake.add(1);
     // Wieża odlatuje w zwolnionym tempie.
     this.debris.add(v.model.turret, new THREE.Vector3((Math.random() - 0.5) * 3, 11, (Math.random() - 0.5) * 3), new THREE.Vector3(2 + Math.random() * 2, Math.random() * 3, 1.5), 12, 0.45);
-    for (const m of v.model.materials) m.color.multiplyScalar(0.35);
+    v.model.char();
+    this.comic.show(p.clone().setY(3), this.camera, 1.2, 'KA-BUM!');
   }
 
   // ------------------------------------------------------------ klatka
@@ -355,7 +372,11 @@ export class GameRenderer {
     this.sparks.update(dt * slow);
     this.smoke.update(dt * slow);
     this.debris.update(dt, slow);
+    this.impacts.update(dt * slow);
     this.shake.update(dt);
+    this.fovKick = Math.max(0, this.fovKick - dt * 25);
+    this.camera.fov = 35 - this.fovKick;
+    this.camera.updateProjectionMatrix();
     this.arena?.marks.flush();
     this.updateCamera(prev, curr, alpha, dt);
     this.updateDebug(curr);
@@ -378,7 +399,7 @@ export class GameRenderer {
     m.body.position.y = -lerp(a.susp, b.susp, t) / 1000;
     m.turret.rotation.y = -lerp(a.turretYaw, b.turretYaw, t) * DEG;
     m.mantlet.rotation.z = lerp(a.pitch, b.pitch, t) * DEG;
-    m.barrel.position.x = lerp(a.ext, b.ext, t) / 1000 - m.def.extRange * 0.15;
+    m.barrel.position.x = lerp(a.ext, b.ext, t) / 1000;
 
     // Prędkość wzdłuż kadłuba i obrót → przesuw gąsienic.
     const yawRad = yawCd * DEG;
@@ -409,6 +430,25 @@ export class GameRenderer {
     m.body.rotation.z = lerp(a.lift, b.lift, t) * DEG + v.sway;
     m.body.rotation.x = v.roll;
     if (b.state === ST_KO && !v.destroyed) m.body.rotation.x = 0.05;
+
+    // Salto po wyrzucie (do tyłu) i pochylenie w locie – czysto wizualne.
+    const TWO_PI = Math.PI * 2;
+    if (b.state === ST_AIRHIT && dt > 0) {
+      v.tumble += dt * (b.vy > 0 ? 11 : 7);
+    } else {
+      const target = Math.round(v.tumble / TWO_PI) * TWO_PI;
+      v.tumble += (target - v.tumble) * Math.min(1, dt * 14);
+    }
+    let tilt = 0;
+    if (b.state === ST_AIR || (b.state === ST_ATTACK && b.y > 0)) tilt = THREE.MathUtils.clamp(b.vy * 0.0009, -0.45, 0.45);
+    if (b.state === ST_KNOCKDOWN && b.y <= 0) tilt = -0.12 + Math.sin(this.time * 18) * 0.03 * Math.max(0, 1 - b.stateFrame / 20);
+    m.spin.rotation.z = v.tumble + tilt;
+
+    // Smuga ciosu za końcem lufy.
+    m.root.updateMatrixWorld(true);
+    const tip = m.barrel.localToWorld(m.tipLocal.clone());
+    const mid = m.barrel.localToWorld(m.midLocal.clone());
+    v.trail.push(tip, mid, b.state === ST_ATTACK && !v.destroyed, dt);
 
     // Błysk trafienia.
     v.flash = Math.max(0, v.flash - dt * 6);
@@ -487,6 +527,12 @@ export class GameRenderer {
       const [sx, sy, sz] = this.arena.def.sunDir;
       this.arena.sun.position.set(midX + sx * 40, sy * 40, midZ + sz * 40);
     }
+  }
+
+  private makeTrail(i: number): SwingTrail {
+    const trail = new SwingTrail(i === 0 ? new THREE.Color(1, 0.75, 0.25) : new THREE.Color(0.35, 0.8, 1));
+    this.scene.add(trail.mesh);
+    return trail;
   }
 
   /** Pokaz modeli na ekranie wyboru: czołgi obracają się na „podestach”. */

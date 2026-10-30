@@ -24,13 +24,13 @@ export const ARENAS: ArenaDef[] = [
     id: 'factory',
     name: 'Zrujnowana fabryka',
     sky: [
-      [0, '#2a2140'],
-      [0.35, '#7a3b4a'],
-      [0.62, '#e0784a'],
-      [0.78, '#f4b66a'],
-      [1, '#5a3a30'],
+      [0, '#3b2a7a'],
+      [0.35, '#c04a7a'],
+      [0.6, '#ff8a4a'],
+      [0.78, '#ffd27a'],
+      [1, '#ffb070'],
     ],
-    fog: 0xb0674a,
+    fog: 0xf0a070,
     fogNear: 30,
     fogFar: 120,
     ground: ['#8a7660', '#5e5142', '#a8957a'],
@@ -45,10 +45,10 @@ export const ARENAS: ArenaDef[] = [
     id: 'winter',
     name: 'Zimowy poligon',
     sky: [
-      [0, '#7d93ad'],
-      [0.5, '#b8c6d4'],
-      [0.8, '#dfe6ec'],
-      [1, '#c9d1d8'],
+      [0, '#3a7ad8'],
+      [0.5, '#7ab8f0'],
+      [0.8, '#d4ecff'],
+      [1, '#eef6ff'],
     ],
     fog: 0xc8d2dc,
     fogNear: 25,
@@ -183,8 +183,8 @@ export class Arena {
   }
 
   private buildFactory(): void {
-    const brick = new THREE.MeshStandardMaterial({ color: 0x6a4436, roughness: 0.95 });
-    const concrete = new THREE.MeshStandardMaterial({ color: 0x5c5650, roughness: 0.9 });
+    const brick = new THREE.MeshStandardMaterial({ color: 0xb0654a, roughness: 0.95 });
+    const concrete = new THREE.MeshStandardMaterial({ color: 0x9a9184, roughness: 0.9 });
     const steel = new THREE.MeshStandardMaterial({ color: 0x3a3a3c, roughness: 0.6, metalness: 0.7 });
     const glowWin = new THREE.MeshStandardMaterial({ color: 0x221a18, emissive: 0xff9a50, emissiveIntensity: 0.5 });
     const rnd = (a: number, b: number): number => a + Math.random() * (b - a);

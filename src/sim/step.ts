@@ -20,6 +20,8 @@ import type { FighterState, GameState, MatchOptions, MoveStance } from './types'
 
 const BUTTON_MASK = 0xff0;
 const THROW_MOVE = MOVE_INDEX['throw']!;
+/** Podbicie przy trafieniu w powietrzu (mm/klatkę). */
+const JUGGLE_LIFT = 330;
 
 // Tolerancje osiągnięcia celu przez napędy.
 const TOL_YAW = 250;
@@ -84,6 +86,9 @@ export function createFighter(tank: number, side: number): FighterState {
     throwEX: 0,
     throwEZ: 0,
     idleFrames: 0,
+    bounces: 0,
+    chainBuf: 0,
+    chainTimer: 0,
     prevInput: 0,
     histHead: 0,
     hist,
@@ -245,6 +250,7 @@ function findMove(f: FighterState, o: FighterState, pressed: number): CompiledMo
   if (stance === null) return null;
   const t = tankOf(f);
   for (const m of t.moves) {
+    if (m.def.chainOnly) continue;
     if (!(pressed & BUTTON_BITS[m.def.input.button])) continue;
     if (!m.def.stance.includes(stance)) continue;
     // Rzut tylko z bliska – w przeciwnym razie zwykłe dźgnięcie.
@@ -268,6 +274,8 @@ function startMove(s: GameState, i: number, m: CompiledMove): void {
     return;
   }
   setState(f, ST_ATTACK);
+  f.chainBuf = 0;
+  f.chainTimer = 0;
   f.move = m.index;
   f.moveKey = 0;
   f.keyFrame = 0;
@@ -281,6 +289,29 @@ function startMove(s: GameState, i: number, m: CompiledMove): void {
   const aim = aimAngle(f, o);
   f.moveBaseYaw = nearestUnwrapped(f.turretYaw, aim - f.hullYaw - f.pivot);
   enterKey(s, i);
+}
+
+/**
+ * Łańcuchy kombo: przycisk wciśnięty w trakcie ataku jest buforowany, a od pierwszej
+ * aktywnej fazy ruch przechodzi płynnie w kolejny – wieża zachowuje swój pęd.
+ */
+function tryChain(s: GameState, i: number, pressed: number, rel: number): void {
+  const f = s.fighters[i]!;
+  const m = tankOf(f).moves[f.move]!;
+  if (!m.chains.length) return;
+  if (pressed) {
+    f.chainBuf = pressed;
+    f.chainTimer = 14;
+  } else if (f.chainTimer > 0 && --f.chainTimer === 0) f.chainBuf = 0;
+  if (!f.chainBuf || f.moveKey < m.cancelKey) return;
+  for (const c of m.chains) {
+    if (!(f.chainBuf & c.bit) || c.to < 0) continue;
+    if (c.dir !== null && !dirMatches(rel, c.dir, false)) continue;
+    f.chainBuf = 0;
+    f.chainTimer = 0;
+    startMove(s, i, tankOf(f).moves[c.to]!);
+    return;
+  }
 }
 
 function enterKey(s: GameState, i: number): void {
@@ -421,6 +452,8 @@ function updateFighter(s: GameState, i: number, input: number): void {
   if (canAct(f) || f.state === ST_AIR) {
     const m = findMove(f, o, pressed);
     if (m) startMove(s, i, m);
+  } else if (f.state === ST_ATTACK && f.move >= 0) {
+    tryChain(s, i, pressed, rel);
   }
 
   let desiredAlong = 0;
@@ -467,7 +500,7 @@ function updateFighter(s: GameState, i: number, input: number): void {
         desiredAlong = t.walk;
       } else {
         desiredAlong = t.run;
-        f.run = Math.max(0, f.run - 12);
+        f.run = Math.max(0, f.run - 8);
       }
       break;
     }
@@ -809,13 +842,18 @@ function resolveHit(s: GameState, h: PendingHit): void {
   d.combo++;
   d.blocking = 0;
   d.move = -1;
-  const kb = Math.trunc((m.knockback * massFactor) / 1000);
+  let kb = Math.trunc((m.knockback * massFactor) / 1000);
   const airborne = d.y > 0 || d.state === ST_AIR || d.state === ST_AIRHIT;
   if (m.launch > 0 || airborne) {
     setState(d, ST_AIRHIT);
-    const jug = Math.max(0, 1000 - d.juggleCount * 220);
-    const base = m.launch > 0 ? m.launch : 180;
-    d.vy = Math.max(d.vy, Math.trunc((((base * massFactor) / 1000) * jug) / 1000));
+    d.bounces = 0;
+    // Każde kolejne trafienie w powietrzu podbija wyżej, ale coraz słabiej.
+    const jug = Math.max(250, 1000 - d.juggleCount * 150);
+    const base = m.launch > 0 ? m.launch : JUGGLE_LIFT;
+    const lift = Math.trunc((((base * massFactor) / 1000) * jug) / 1000);
+    d.vy = m.launch > 0 ? lift : Math.max(d.vy + Math.trunc(lift / 2), lift);
+    // W powietrzu odrzut jest mocniejszy – przeciwnik leci do tyłu.
+    kb = Math.trunc((kb * 3) / 2) + Math.trunc((40 * massFactor) / 1000);
     d.juggleCount++;
     d.y = Math.max(d.y, 1);
   } else if (m.def.knockdown) {
@@ -852,7 +890,12 @@ function integrate(s: GameState, i: number): void {
       f.suspVel += Math.trunc(impact / 3);
       emit(s, EV_LAND, i, f, Math.trunc((t.mass * Math.min(impact, 600)) / 300));
       if (f.state === ST_AIR) setState(f, ST_LAND);
-      else if (f.state === ST_AIRHIT) setState(f, ST_KNOCKDOWN);
+      else if (f.state === ST_AIRHIT && f.bounces === 0 && impact > 200) {
+        // Odbicie od ziemi po mocnym wyrzucie – czołg podskakuje i dalej sunie do tyłu.
+        f.bounces = 1;
+        f.vy = Math.trunc((impact * 35) / 100);
+        f.y = 1;
+      } else if (f.state === ST_AIRHIT) setState(f, ST_KNOCKDOWN);
       else if (f.state === ST_ATTACK) {
         const k = t.moves[f.move]!.keys[f.moveKey];
         if (!k || !k.untilLanding) {
