@@ -16,6 +16,8 @@ Miejsca, w których specyfikacja zostawiała wybór, i co wybrano.
 - **Lufa**: oś elewacji (czopy) jest z przodu wieży, a lufa wysuwa się teleskopowo z kołyski przymocowanej do jarzma – w symulacji i w modelu, więc lufa nigdy nie odstaje od wieży.
 
 ## Wersja 4
+- Interfejs w stylu współczesnych bijatyk: półprzezroczyste panele z rozmyciem, ukośne kształty, akcenty kolorów graczy (pomarańcz / błękit), smukłe paski życia z „duchem” obrażeń, licznik czasu w heksagonalnej plakietce, rombowe znaczniki rund, animowane komunikaty. Krój pisma: Chakra Petch + Inter z Google Fonts (jedyny zasób zewnętrzny; bez internetu gra spada na czcionki systemowe).
+- Kamera: płaszczyzna bliska rośnie z odległością kamery, a drzewa stoją dalej niż jej zasięg – nic nie zasłania walki.
 - Nazwa gry: **Tankken 3**; wszystkie teksty w grze po angielsku (nazwy czołgów: MAMMOTH, THUNDER, WASP, COBRA). Dokumentacja i komentarze w kodzie zostają po polsku.
 - **Online**: zamiast własnego serwera Node (wymagałby konta na hostingu) – WebRTC P2P przez PeerJS z darmowym publicznym serwerem sygnalizacyjnym; dzięki temu gra online działa na GitHub Pages. Netcode od razu jako rollback (etap „lockstep” pominięty – rollback go zastępuje). Wejścia wysyłane z redundancją i potwierdzeniem (`ack`), więc po krótkim zerwaniu brakujące klatki są dosyłane.
 - **Muzyka**: biblioteki z darmowymi dźwiękami nie są osiągalne z tego środowiska (dostępny tylko rejestr npm), więc muzyka jest syntezowana sekwencerem (osobne utwory do menu i walki). Opcjonalne pliki w `public/audio/` mają pierwszeństwo.

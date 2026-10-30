@@ -78,7 +78,7 @@ export class GameRenderer {
   private readonly tracers = new Tracers();
   private vignette: ShaderPass;
   /** Światło wypełniające od strony kamery – czołgi czytelne nawet pod słońce. */
-  private readonly fill = new THREE.DirectionalLight(0xffe2c4, 1.6);
+  private readonly fill = new THREE.DirectionalLight(0xffe2c4, 2.3);
   private readonly comic = new ComicText();
   private fovKick = 0;
   private readonly camPos = new THREE.Vector3(0, 5, 20);
@@ -584,8 +584,11 @@ export class GameRenderer {
     target = this.camAngle * DEG;
     const intoX = Math.sin(target);
     const intoZ = -Math.cos(target);
-    const dist = this.showroom ? 14 : THREE.MathUtils.clamp(sep * 1.25 + 10, 15, 32);
+    const dist = this.showroom ? 14 : THREE.MathUtils.clamp(sep * 1.15 + 10, 15, 27);
     const height = 2.4 + dist * 0.16 + Math.max(ay, by) * 0.3;
+    // Płaszczyzna bliska rośnie z odległością kamery: nic między kamerą a walką jej nie zasłania
+    // (dolna krawędź kadru wciąż trafia w podłoże – sprawdzone dla zakresu 15–27 m).
+    this.camera.near = this.showroom ? 0.1 : dist * 0.45;
     const desired = new THREE.Vector3(midX - intoX * dist, height, midZ - intoZ * dist);
     const look = new THREE.Vector3(midX, 1.3 + Math.max(ay, by) * 0.4, midZ);
     const k = Math.min(1, dt * 6);
@@ -612,6 +615,11 @@ export class GameRenderer {
   /** Pokaz modeli na ekranie wyboru: czołgi obracają się na „podestach”. */
   renderShowroom(t1: number, t2: number, dt: number): void {
     this.time += dt;
+    if (this.camera.near !== 0.1 || this.camera.fov !== 35) {
+      this.camera.near = 0.1;
+      this.camera.fov = 35;
+      this.camera.updateProjectionMatrix();
+    }
     if (!this.views.length || this.views[0]!.model.def !== TANKS[t1] || this.views[1]!.model.def !== TANKS[t2]) {
       this.setTanks(t1, t2);
     }
@@ -619,7 +627,7 @@ export class GameRenderer {
     for (let i = 0; i < 2; i++) {
       const v = this.views[i]!;
       const m = v.model;
-      m.root.position.set(i === 0 ? -3.4 : 3.4, 0, 0);
+      m.root.position.set(i === 0 ? -2.7 : 2.7, 0, i === 0 ? 0.6 : -0.6);
       m.root.rotation.y = spin * (i === 0 ? 1 : -1) + (i === 0 ? 0.6 : Math.PI - 0.6);
       m.turret.rotation.y = Math.sin(this.time * 0.9 + i) * 0.5;
       m.mantlet.rotation.z = (Math.sin(this.time * 1.3 + i) * 0.5 + 0.5) * 0.25;

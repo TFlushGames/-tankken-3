@@ -45,7 +45,7 @@ export const TANK_STYLES: Record<string, TankStyle> = {
     base: '#7f8f4a',
     patch: '#5a6a38',
     accent: '#e8e2c4',
-    alt: ['#5d6b78', '#3e4a55', '#e8c25a'],
+    alt: ['#8399ab', '#5f7486', '#ffd36a'],
     number: '214',
     numberColor: '#f2f0e0',
     wheels: { count: 5, size: 0.98, interleave: false, returnRollers: 0 },

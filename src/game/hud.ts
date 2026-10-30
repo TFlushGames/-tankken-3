@@ -39,7 +39,9 @@ export class Hud {
     const top = el('div', 'hud-top', this.root);
     for (let i = 0; i < 2; i++) {
       const side = el('div', `hud-side hud-side-${i}`, top);
-      const name = el('div', 'hud-name', side);
+      const plate = el('div', 'hud-plate', side);
+      el('span', 'hud-tag', plate, `P${i + 1}`);
+      const name = el('div', 'hud-name', plate);
       const bar = el('div', 'hud-bar', side);
       const ghost = el('div', 'hud-ghost', bar);
       const fill = el('div', 'hud-fill', bar);
@@ -84,7 +86,7 @@ export class Hud {
       sd.run.style.width = `${(f.run / RUN_MAX) * 100}%`;
       sd.pips.forEach((p, k) => p.classList.toggle('on', f.wins > k));
       if (f.combo >= 2 && s.phase !== PH_INTRO) {
-        sd.combo.textContent = `${f.combo} HIT COMBO!`;
+        sd.combo.innerHTML = `<b>${f.combo}</b><span>HITS</span>`;
         sd.combo.classList.add('on');
       } else sd.combo.classList.remove('on');
     }

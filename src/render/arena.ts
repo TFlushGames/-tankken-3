@@ -467,12 +467,13 @@ export class Arena {
     // Las w kilku warstwach: świerki, liściaste (część jesiennych), brzozy, kamienie.
     for (let i = 0; i < 110; i++) {
       const a = rnd(0, Math.PI * 2);
-      const d = rnd(21, 60);
+      // Drzewa dopiero za zasięgiem kamery – nic nie zasłania walki.
+      const d = rnd(31, 66);
       const x = Math.cos(a) * d;
       const z = Math.sin(a) * d;
       const s = rnd(0.9, 1.6);
       const k = Math.random();
-      const b = d < 35 ? near : far;
+      const b = d < 42 ? near : far;
       if (k < 0.4) this.pine(b, x, z, s);
       else if (k < 0.8) this.broadleaf(b, x, z, s, Math.random() < 0.35);
       else this.birch(b, x, z, s);
@@ -497,7 +498,7 @@ export class Arena {
   }
 
   private buildIsland(density: number): void {
-    this.ground(26, 0.0);
+    this.ground(40, 0.0);
     // Woda dookoła wyspy.
     this.water = new THREE.ShaderMaterial({
       vertexShader: WATER_VERT,
@@ -509,7 +510,7 @@ export class Arena {
         uFogColor: { value: new THREE.Color(this.def.fog) },
         uFogNear: { value: this.def.fogNear },
         uFogFar: { value: this.def.fogFar },
-        uShore: { value: 26 },
+        uShore: { value: 40 },
       },
     });
     const water = new THREE.Mesh(new THREE.PlaneGeometry(500, 500, 80, 80), this.water);
@@ -530,7 +531,7 @@ export class Arena {
     const frond = this.toon('#4f8a3a');
     for (let i = 0; i < 16; i++) {
       const a = rnd(0, Math.PI * 2);
-      const d = rnd(18.5, 24);
+      const d = rnd(31, 37);
       const x = Math.cos(a) * d;
       const z = Math.sin(a) * d;
       const lean = rnd(-0.3, 0.3);
@@ -543,9 +544,9 @@ export class Arena {
     }
     // Pomost, łódka, skrzynie.
     const plank = this.toon('#8c6a48');
-    for (let i = 0; i < 8; i++) near.add(new THREE.BoxGeometry(0.5, 0.1, 2.4), plank, 24 + i * 0.55, 0.4, -6, 1, 1, 1, 0);
-    for (let i = 0; i < 4; i++) for (const s of [-1, 1]) near.add(new THREE.CylinderGeometry(0.1, 0.1, 1.4, 6), this.toon('#5e4630'), 24.2 + i * 1.3, -0.2, -6 + s * 1.1);
-    near.add(new THREE.BoxGeometry(3, 0.5, 1.2), this.toon('#a0622e'), 29, -0.05, -2.5, 1, 1, 1, 0.4);
+    for (let i = 0; i < 10; i++) near.add(new THREE.BoxGeometry(0.5, 0.1, 2.4), plank, 38 + i * 0.55, 0.4, -10, 1, 1, 1, 0);
+    for (let i = 0; i < 5; i++) for (const s of [-1, 1]) near.add(new THREE.CylinderGeometry(0.1, 0.1, 1.4, 6), this.toon('#5e4630'), 38.2 + i * 1.3, -0.2, -10 + s * 1.1);
+    near.add(new THREE.BoxGeometry(3, 0.5, 1.2), this.toon('#a0622e'), 44, -0.05, -6.5, 1, 1, 1, 0.4);
     for (let i = 0; i < 3; i++) near.add(new THREE.BoxGeometry(0.8, 0.8, 0.8), plank, -21 + i * 0.9, 0.4, 13 + (i % 2) * 0.8, 1, 1, 1, rnd(0, 1));
     // Odległe wyspy z klifami i drzewami.
     for (let i = 0; i < 7; i++) {
@@ -558,7 +559,7 @@ export class Arena {
     near.build(this.group, true);
     far.build(this.group, false);
     // Kępy trawy tylko na obrzeżach wyspy.
-    this.grass = new Grass(this.def, this.marks, Math.round(16000 * density), 15.5, 25, 0.5);
+    this.grass = new Grass(this.def, this.marks, Math.round(22000 * density), 15.5, 38, 0.5);
     this.group.add(this.grass.mesh);
   }
 
