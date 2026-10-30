@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ARENA_RADIUS } from '../sim/constants';
 import { groundTexture } from './textures';
-import { toonMat } from './toon';
+import { occludable, toonMat } from './toon';
 
 export interface ArenaDef {
   id: string;
@@ -371,7 +371,7 @@ export class Arena {
     const key = String(color);
     let m = this.mats.get(key);
     if (!m) {
-      m = toonMat({ color });
+      m = occludable(toonMat({ color }));
       this.mats.set(key, m);
     }
     return m;
@@ -456,7 +456,8 @@ export class Arena {
     const far = new Batch();
     // Ogrodzenie z pali i bele siana – granica areny.
     const R = ARENA_RADIUS / 1000 + 1.2;
-    const wood = this.toon('#7a5434');
+    // Płot jest niski – nie wycinamy go z korytarza kamery.
+    const wood = toonMat({ color: '#7a5434' });
     for (let i = 0; i < 48; i++) {
       const a = (i / 48) * Math.PI * 2;
       near.add(new THREE.CylinderGeometry(0.1, 0.12, 1.3, 6), wood, Math.cos(a) * R, 0.65, Math.sin(a) * R);

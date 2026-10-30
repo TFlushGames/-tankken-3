@@ -19,7 +19,7 @@ import { isMoveActive } from '../sim/step';
 import type { FighterState, GameState, SimEvent } from '../sim/types';
 import { ARENAS, Arena } from './arena';
 import { CameraShake, ComicText, DebrisSystem, ImpactFX, ParticleSystem, PuffSystem, SwingTrail, Tracers } from './effects';
-import { toonMat } from './toon';
+import { occlusion, toonMat } from './toon';
 import { FinisherDirector, type Cue } from './cinematic';
 import { TankModel } from './tankModel';
 
@@ -539,6 +539,12 @@ export class GameRenderer {
   }
 
   private draw(): void {
+    occlusion.uOccCam.value.copy(this.camera.position);
+    const ts = [occlusion.uOccT1.value, occlusion.uOccT2.value];
+    for (let i = 0; i < 2; i++) {
+      const v = this.views[i];
+      if (v) ts[i]!.copy(v.model.root.position).setY(Math.max(1.2, v.model.root.position.y + 1));
+    }
     if (this.quality.post) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
   }

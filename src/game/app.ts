@@ -529,7 +529,7 @@ export class App {
     if (this.cine !== 'off') {
       // W trakcie finishera: Esc wychodzi, Enter po animacji to rewanż.
       if (this.kb.consume('Escape')) return this.net ? this.goToLobby(true) : this.showMenu();
-      if (this.cine === 'done' && (this.kb.consume('Enter') || this.kb.consume('KeyT'))) {
+      if (this.cine === 'done' && this.kb.consume('Enter')) {
         if (this.net) this.requestRematch();
         else this.startMatch();
       }
@@ -551,12 +551,6 @@ export class App {
       if (this.kb.consume('F7')) {
         this.dummy = (this.dummy + 1) % DUMMY_MODES.length;
         this.renderTrainingPanel();
-      }
-    }
-    if (this.state?.phase === PH_MATCH_END) {
-      if (this.kb.consume('Enter') || this.kb.consume('KeyT') || this.kb.consume('Numpad7')) {
-        if (this.net) this.requestRematch();
-        else this.startMatch();
       }
     }
   }

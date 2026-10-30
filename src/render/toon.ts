@@ -21,6 +21,50 @@ export function toonMat(p: THREE.MeshToonMaterialParameters): THREE.MeshToonMate
   return new THREE.MeshToonMaterial({ gradientMap: toonGradient(), ...p });
 }
 
+/** Wspólne dane „przezroczystego korytarza”: nic z otoczenia nie stoi między kamerą a czołgami. */
+export const occlusion = {
+  uOccCam: { value: new THREE.Vector3(0, 5, 20) },
+  uOccT1: { value: new THREE.Vector3(-3, 1.2, 0) },
+  uOccT2: { value: new THREE.Vector3(3, 1.2, 0) },
+};
+
+/**
+ * Materiał otoczenia, który wycina (z ditheringiem) fragmenty leżące w korytarzu kamera→czołg.
+ * Korytarz zwęża się przy czołgu, więc płot i kamienie tuż obok walki zostają.
+ */
+export function occludable<T extends THREE.Material>(m: T): T {
+  m.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, occlusion);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vOccW;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvOccW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vOccW;
+uniform vec3 uOccCam;
+uniform vec3 uOccT1;
+uniform vec3 uOccT2;
+float occCut(vec3 t) {
+  vec3 d = t - uOccCam;
+  float len = length(d);
+  float k = clamp(dot(vOccW - uOccCam, d) / (len * len), 0.0, 1.0);
+  if (k * len > len - 3.5) return 0.0;
+  float r = 2.0 + 2.5 * (1.0 - k);
+  float dist = length(uOccCam + d * k - vOccW);
+  return 1.0 - smoothstep(r - 1.2, r, dist);
+}`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+{
+  float cut = max(occCut(uOccT1), occCut(uOccT2));
+  vec2 p = floor(gl_FragCoord.xy);
+  float dither = fract(dot(p, vec2(0.5, 0.25)) + 0.125 * mod(p.y, 2.0));
+  if (cut > dither * 0.9 + 0.05) discard;
+}`);
+  };
+  m.customProgramCacheKey = () => 'occludable';
+  return m;
+}
+
 const outlineMats = new Map<number, THREE.MeshBasicMaterial>();
 
 /** Materiał konturu: wierzchołki wypchnięte wzdłuż normalnej, rysowane tylne ściany. */
