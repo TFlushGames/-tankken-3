@@ -81,6 +81,10 @@ export class App {
   private seedCounter = 1;
   private showNet = false;
   private net: OnlineState | null = null;
+  /** Przerywnik z finisherem po ostatnim K.O. */
+  private cine: 'off' | 'playing' | 'done' = 'off';
+  private cineLayer: HTMLElement | null = null;
+  private matchEndSeen = -1;
 
   constructor(canvas: HTMLCanvasElement, ui: HTMLElement) {
     this.ui = ui;
@@ -95,6 +99,16 @@ export class App {
     const unlock = (): void => this.audio.unlock();
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
+    this.renderer.onCaption = (text, big) => this.cineCaption(text, big);
+    this.renderer.onCue = (c) => {
+      if (c === 'whoosh' || c === 'swing') this.audio.whoosh(c === 'swing' ? 900 : 500);
+      else if (c === 'impact') {
+        this.audio.clang(1.5, 0.55);
+        this.audio.thump(1.6);
+      } else if (c === 'boom') this.audio.explosion();
+      else if (c === 'ping') this.audio.ping();
+      else if (c === 'drill') this.audio.drill();
+    };
     this.showMenu();
     // Link z zaproszeniem: ?room=KOD
     const room = normalizeCode(new URLSearchParams(location.search).get('room') ?? '');
@@ -113,6 +127,7 @@ export class App {
   // ------------------------------------------------------------ ekrany
 
   private setScreen(s: Screen, content: HTMLElement | null): void {
+    this.endCinematic();
     this.screen = s;
     this.ui.replaceChildren();
     if (content) this.ui.append(content);
@@ -275,7 +290,6 @@ export class App {
   }
 
   private startMatch(): void {
-    this.hud.escHint = 'menu';
     this.state = createMatch(this.pick[0], this.pick[1], 0x5eed + this.seedCounter++, { training: this.training ? 1 : 0 });
     this.prev = snapshot(this.state);
     this.acc = 0;
@@ -512,7 +526,15 @@ export class App {
 
   private fightInput(): void {
     // Online po meczu: Esc wraca do wyboru czołgu (połączenie zostaje).
-    if (this.net && this.state?.phase === PH_MATCH_END && this.kb.consume('Escape')) return this.goToLobby(true);
+    if (this.cine !== 'off') {
+      // W trakcie finishera: Esc wychodzi, Enter po animacji to rewanż.
+      if (this.kb.consume('Escape')) return this.net ? this.goToLobby(true) : this.showMenu();
+      if (this.cine === 'done' && (this.kb.consume('Enter') || this.kb.consume('KeyT'))) {
+        if (this.net) this.requestRematch();
+        else this.startMatch();
+      }
+      return;
+    }
     if (this.kb.consume('Escape')) this.togglePause();
     if (this.kb.consume('F1')) this.renderer.showDebug = !this.renderer.showDebug;
     if (this.kb.consume('F2')) this.showNet = !this.showNet;
@@ -583,7 +605,24 @@ export class App {
         break;
     }
     this.netHeartbeat(now);
-    if (this.screen === 'fight' && this.state && this.prev) {
+    if (this.screen === 'fight' && this.cine === 'off' && this.matchEndConfirmed()) this.beginCinematic();
+    if (this.cine !== 'off') {
+      // Online symulacja musi dalej tykać, żeby przeciwnik dostawał nasze (puste) wejścia.
+      if (this.net?.session) {
+        this.acc += dtMs;
+        for (let n = 0; this.acc >= STEP_MS && n < 5; n++) {
+          this.simStep();
+          this.acc -= STEP_MS;
+        }
+        this.acc = Math.min(this.acc, STEP_MS);
+      }
+      const done = this.renderer.renderCinematic(dt);
+      if (done && this.cine === 'playing') {
+        this.cine = 'done';
+        this.showEndMenu();
+      }
+      this.audio.updateContinuous(this.state!);
+    } else if (this.screen === 'fight' && this.state && this.prev) {
       const frozen = !this.net && (!!this.pauseMenu || (this.training && this.paused));
       if (!frozen) {
         this.acc += dtMs;
@@ -839,7 +878,6 @@ export class App {
     this.acc = 0;
     this.renderer.setTanks(tanks[0], tanks[1]);
     this.audio.startEngines(tanks);
-    this.hud.escHint = 'change tank';
     this.setScreen('fight', null);
   }
 
@@ -869,6 +907,7 @@ export class App {
     n.rematchMe = true;
     n.transport?.send({ t: 'rematch' });
     this.hud.setDebug('Waiting for the opponent to accept the rematch…');
+    this.setEndStatus('Waiting for the opponent…');
     this.checkRematch();
   }
 
@@ -912,6 +951,7 @@ export class App {
         break;
       case 'rematch':
         net.rematchOpp = true;
+        if (!net.rematchMe) this.setEndStatus('Opponent wants a rematch!');
         this.checkRematch();
         break;
       case 'lobby':
@@ -975,6 +1015,78 @@ export class App {
       history.replaceState(null, '', location.pathname + (q ? `?${q}` : ''));
     }
   }
+
+  // ------------------------------------------------------------ koniec meczu: finisher i menu
+
+  /** Koniec meczu, który nie zniknie po cofnięciu (online: policzony z potwierdzonych wejść). */
+  private matchEndConfirmed(): boolean {
+    const s = this.state;
+    if (!s || s.phase !== PH_MATCH_END) {
+      this.matchEndSeen = -1;
+      return false;
+    }
+    if (this.matchEndSeen < 0) this.matchEndSeen = s.frame;
+    const ses = this.net?.session;
+    return !ses || ses.confirmedFrame >= this.matchEndSeen;
+  }
+
+  private beginCinematic(): void {
+    if (!this.state) return;
+    this.cine = 'playing';
+    this.hud.show(false);
+    this.pauseMenu?.remove();
+    this.pauseMenu = null;
+    this.renderer.startFinisher(this.state);
+    this.audio.stopEngines();
+    const layer = h('div', { class: 'cine' }, h('div', { class: 'letterbox top' }), h('div', { class: 'letterbox bottom' }));
+    const lines = h('div', { class: 'speedlines' });
+    layer.append(lines);
+    window.setTimeout(() => lines.remove(), 1400);
+    document.body.append(layer);
+    this.cineLayer = layer;
+  }
+
+  private cineCaption(text: string, big = false): void {
+    if (!this.cineLayer) return;
+    const c = h('div', { class: `cine-caption ${big ? 'big' : ''}` }, text);
+    this.cineLayer.append(c);
+    window.setTimeout(() => c.remove(), big ? 1300 : 2600);
+  }
+
+  private showEndMenu(): void {
+    const s = this.state;
+    if (!s || !this.cineLayer) return;
+    const winner = TANKS[s.fighters[Math.max(0, s.winner)]!.tank]!;
+    const label = this.net ? (s.winner === (this.isHost() ? 0 : 1) ? 'YOU WIN' : 'YOU LOSE') : `PLAYER ${s.winner + 1} WINS`;
+    const btn = (text: string, fn: () => void, primary = false): HTMLButtonElement => {
+      const b = h('button', { class: `menu-item ${primary ? 'active' : ''}` }, text);
+      b.addEventListener('click', fn);
+      return b;
+    };
+    const panel = h('div', { class: 'end-menu' },
+      h('div', { class: 'end-title' }, label),
+      h('div', { class: 'end-sub' }, winner.name),
+      btn('Rematch', () => (this.net ? this.requestRematch() : this.startMatch()), true),
+      btn('Character select', () => (this.net ? this.goToLobby(true) : this.showSelect(false))),
+      btn(this.net ? 'Leave room' : 'Main menu', () => this.showMenu()),
+      h('div', { class: 'end-status' }, this.net?.rematchOpp ? 'Opponent wants a rematch!' : ''),
+    );
+    this.cineLayer.append(panel);
+  }
+
+  private setEndStatus(text: string): void {
+    const el = this.cineLayer?.querySelector('.end-status');
+    if (el) el.textContent = text;
+  }
+
+  private endCinematic(): void {
+    if (this.cine === 'off') return;
+    this.cine = 'off';
+    this.renderer.stopFinisher();
+    this.cineLayer?.remove();
+    this.cineLayer = null;
+  }
+
 }
 
 interface OnlineState {

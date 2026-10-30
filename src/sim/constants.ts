@@ -56,6 +56,8 @@ export const ARENA_RADIUS = 15000;
 export const INTRO_FRAMES = 100;
 export const FIGHT_CALL_FRAME = 60;
 export const KO_FRAMES = 210;
+/** K.O. kończące mecz: krótsza pauza, potem przerywnik z finisherem. */
+export const FINAL_KO_FRAMES = 120;
 export const RUN_MAX = 1000;
 export const HIST_LEN = 60;
 /** Bufor wejść: przycisk wciśnięty, gdy nie można działać, czeka tyle klatek. */

@@ -4,7 +4,7 @@ import {
   ARENA_RADIUS, DASH_BACK_SCALE, DASH_CANCEL, DASH_PROFILE, DOUBLE_TAP, EV_BLAST, EV_DASH, EV_FIRE, EV_PLANT,
   SHOT_RANGE, ST_DASH, ST_PULLED, INPUT_BUFFER, CANNON_RELOAD, PULL_FRAMES, EV_BLOCK, EV_CLASH, EV_HOOK, EV_PROJ_END, EV_SPAWN, EV_TELEPORT, EV_FIGHT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_ROUND, EV_SHOT, EV_TECH,
   EV_THROW, EV_TIMEUP, EV_WALL, EV_WHOOSH, FIGHT_CALL_FRAME, GETUP_FRAMES, HIST_LEN, INTRO_FRAMES,
-  KNOCKDOWN_FRAMES, KO_FRAMES, PH_FIGHT, PH_INTRO, PH_KO, PH_MATCH_END, RUN_MAX, SIDESTEP_INVULN,
+  KNOCKDOWN_FRAMES, KO_FRAMES, FINAL_KO_FRAMES, PH_FIGHT, PH_INTRO, PH_KO, PH_MATCH_END, RUN_MAX, SIDESTEP_INVULN,
   SIDESTEP_PROFILE, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_BLOCKSTUN, ST_CROUCH, ST_GETUP, ST_HITSTUN,
   ST_IDLE, ST_JUMPSQUAT, ST_KNOCKDOWN, ST_KO, ST_LAND, ST_RUN, ST_SIDESTEP, ST_THROWING, ST_THROWN,
   ST_WIN, THROW_ACTIVE, THROW_FLIGHT, THROW_RANGE, THROW_RECOVERY, THROW_STARTUP, THROW_TECH,
@@ -1525,7 +1525,9 @@ function updatePhase(s: GameState): void {
       const w = s.fighters[s.roundWinner]!;
       if (w.state === ST_IDLE || w.state === ST_CROUCH) setState(w, ST_WIN);
     }
-    if (s.phaseFrame >= KO_FRAMES) {
+    // Ostatnia runda meczu kończy się szybciej – dalej jest finisher.
+    const final = s.roundWinner >= 0 && s.fighters[s.roundWinner]!.wins + 1 >= s.opts.roundsToWin;
+    if (s.phaseFrame >= (final ? FINAL_KO_FRAMES : KO_FRAMES)) {
       if (s.roundWinner >= 0) s.fighters[s.roundWinner]!.wins++;
       const wa = s.fighters[0].wins;
       const wb = s.fighters[1].wins;

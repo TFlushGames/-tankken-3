@@ -262,6 +262,46 @@ export class AudioEngine {
     n.stop(now + 0.15);
   }
 
+  /** Brzęk gwiazdki znikającej za horyzontem. */
+  ping(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    for (const [f, v] of [[1760, 0.12], [2637, 0.08], [3520, 0.05]] as const) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = f;
+      this.env(o, v, 0.002, 0.9);
+      o.start(now);
+      o.stop(now + 1.1);
+    }
+  }
+
+  /** Narastający jazgot wiertła. */
+  drill(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(60, now);
+    o.frequency.exponentialRampToValueAtTime(420, now + 0.8);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1800;
+    o.connect(lp);
+    this.env(lp, 0.12, 0.05, 1.6);
+    o.start(now);
+    o.stop(now + 1.8);
+  }
+
+  /** Ostatni cios rundy: ciężkie uderzenie i dzwon. */
+  ko(): void {
+    this.thump(1.6);
+    this.clang(1.3, 0.6);
+    this.gong();
+  }
+
   gong(): void {
     const ctx = this.ctx;
     if (!ctx) return;
@@ -314,7 +354,7 @@ export class AudioEngine {
           this.clang(0.3, 1.8);
           break;
         case EV_KO:
-          this.explosion();
+          this.ko();
           break;
         case EV_ROUND:
         case EV_TIMEUP:

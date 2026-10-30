@@ -10,7 +10,7 @@ import { PROJECTILES } from '../data/projectiles';
 import { TANKS } from '../data/tanks';
 import {
   EV_BLAST, EV_BLOCK, EV_CLASH, EV_DASH, EV_FIRE, EV_HOOK, EV_PROJ_END, EV_SPAWN, EV_TELEPORT, EV_HIT, EV_JUMP, EV_KO, EV_LAND, EV_PLANT, EV_SHOT, EV_TECH, EV_THROW, EV_WALL, ST_AIR, ST_AIRHIT, ST_ATTACK, ST_KNOCKDOWN,
-  ST_KO, ST_RUN,
+  ST_KO, ST_RUN, ST_WIN, PH_KO,
 } from '../sim/constants';
 import { icos, isin } from '../sim/fixed';
 import { barrelPoints, hullFrontPoints, hullTop } from '../sim/geometry';
@@ -20,6 +20,7 @@ import type { FighterState, GameState, SimEvent } from '../sim/types';
 import { ARENAS, Arena } from './arena';
 import { CameraShake, ComicText, DebrisSystem, ImpactFX, ParticleSystem, PuffSystem, SwingTrail, Tracers } from './effects';
 import { toonMat } from './toon';
+import { FinisherDirector, type Cue } from './cinematic';
 import { TankModel } from './tankModel';
 
 export interface Quality {
@@ -443,10 +444,60 @@ export class GameRenderer {
     this.sparks.burst(30, { x: p.x, y: p.y + 0.5, z: p.z, life: 0.6, size: 2.2, grow: 1.5, color: new THREE.Color(1, 0.55, 0.2), drag: 3 }, 4);
     this.smoke.burst(60, { x: p.x, y: p.y, z: p.z, life: 3.0, size: 1.2, grow: 3, color: new THREE.Color(0.12, 0.11, 0.1), gravity: -1.2, drag: 1.2 }, 4);
     this.shake.add(1);
-    // Wieża odlatuje w zwolnionym tempie.
-    this.debris.add(v.model.turret, new THREE.Vector3((Math.random() - 0.5) * 3, 11, (Math.random() - 0.5) * 3), new THREE.Vector3(2 + Math.random() * 2, Math.random() * 3, 1.5), 12, 0.45);
-    v.model.char();
-    this.comic.show(p.clone().setY(3), this.camera, 1.2, 'KA-BOOM!');
+    this.impacts.spawn(p, 1.2);
+    this.fovKick = Math.max(this.fovKick, 6);
+  }
+
+  // ------------------------------------------------------------ finisher (przerywnik po meczu)
+
+  private cine: FinisherDirector | null = null;
+  onCaption: (text: string, big?: boolean) => void = () => undefined;
+  onCue: (c: Cue) => void = () => undefined;
+
+  startFinisher(s: GameState): void {
+    this.stopFinisher();
+    const wi = Math.max(0, s.winner);
+    const w = this.views[wi];
+    const l = this.views[1 - wi];
+    if (!w || !l) return;
+    const wf = s.fighters[wi]!;
+    const lf = s.fighters[1 - wi]!;
+    for (const v of [w, l]) v.trail.mesh.visible = false;
+    this.comic.clear();
+    this.cine = new FinisherDirector(
+      {
+        camera: this.camera, scene: this.scene, sparks: this.sparks, puffs: this.puffs, impacts: this.impacts,
+        shake: this.shake, dust: this.dustColor, caption: (t, b) => this.onCaption(t, b), cue: (c) => this.onCue(c),
+      },
+      w.model, l.model,
+      new THREE.Vector3(wf.x / 1000, 0, wf.z / 1000),
+      new THREE.Vector3(lf.x / 1000, 0, lf.z / 1000),
+    );
+  }
+
+  /** Klatka przerywnika; true = akcja skończona (zwycięzca w pozie, kamera krąży). */
+  renderCinematic(dtRaw: number): boolean {
+    const dt = Math.min(dtRaw, 0.05);
+    this.time += dt;
+    const done = this.cine ? this.cine.update(dt) : true;
+    this.sparks.update(dt);
+    this.smoke.update(dt);
+    this.puffs.update(dt);
+    this.impacts.update(dt);
+    this.tracers.update(dt);
+    this.arena?.update(this.time, this.views.map((v) => new THREE.Vector3(v.model.root.position.x, v.model.root.position.z, v.model.root.position.y < 0.5 ? v.model.def.hullLength / 2 + 0.6 : 0.01)));
+    this.fill.position.copy(this.camera.position).setY(this.camera.position.y + 6);
+    this.fill.target.position.copy(this.camLook);
+    this.draw();
+    return done;
+  }
+
+  stopFinisher(): void {
+    if (!this.cine) return;
+    this.cine.dispose();
+    this.cine = null;
+    // Przerywnik zostawia modele porozrzucane – odbuduj je na czysto.
+    if (this.views.length === 2) this.setTanks(TANKS.indexOf(this.views[0]!.model.def), TANKS.indexOf(this.views[1]!.model.def));
   }
 
   // ------------------------------------------------------------ klatka
@@ -504,6 +555,11 @@ export class GameRenderer {
     m.turret.rotation.y = -lerp(a.turretYaw, b.turretYaw, t) * DEG;
     m.mantlet.rotation.z = lerp(a.pitch, b.pitch, t) * DEG;
     m.barrel.position.x = lerp(a.ext, b.ext, t) / 1000;
+    if (b.state === ST_WIN) {
+      // Krótka poza zwycięzcy po rundzie: lufa w górę, wieża tańczy.
+      m.turret.rotation.y += Math.sin(this.time * 4) * 0.5;
+      m.mantlet.rotation.z = 0.4 + Math.sin(this.time * 8) * 0.05;
+    }
 
     // Prędkość wzdłuż kadłuba i obrót → przesuw gąsienic.
     const yawRad = yawCd * DEG;
@@ -636,13 +692,23 @@ export class GameRenderer {
     target = this.camAngle * DEG;
     const intoX = Math.sin(target);
     const intoZ = -Math.cos(target);
-    const dist = this.showroom ? 14 : THREE.MathUtils.clamp(sep * 1.15 + 10, 15, 27);
+    let dist = this.showroom ? 14 : THREE.MathUtils.clamp(sep * 1.15 + 10, 15, 27);
+    let fx = midX;
+    let fz = midZ;
+    // Koniec rundy: po spowolnieniu kamera najeżdża na zwycięzcę.
+    if (curr.phase === PH_KO && curr.phaseFrame > 70 && curr.roundWinner >= 0) {
+      const wf = curr.fighters[curr.roundWinner]!;
+      const k2 = Math.min(1, (curr.phaseFrame - 70) / 40);
+      fx = lerp(midX, wf.x / 1000, k2);
+      fz = lerp(midZ, wf.z / 1000, k2);
+      dist = lerp(dist, 10, k2);
+    }
     const height = 2.4 + dist * 0.16 + Math.max(ay, by) * 0.3;
     // Płaszczyzna bliska rośnie z odległością kamery: nic między kamerą a walką jej nie zasłania
     // (dolna krawędź kadru wciąż trafia w podłoże – sprawdzone dla zakresu 15–27 m).
     this.camera.near = this.showroom ? 0.1 : dist * 0.45;
-    const desired = new THREE.Vector3(midX - intoX * dist, height, midZ - intoZ * dist);
-    const look = new THREE.Vector3(midX, 1.3 + Math.max(ay, by) * 0.4, midZ);
+    const desired = new THREE.Vector3(fx - intoX * dist, height, fz - intoZ * dist);
+    const look = new THREE.Vector3(fx, 1.3 + Math.max(ay, by) * 0.4, fz);
     const k = Math.min(1, dt * 6);
     this.camPos.lerp(desired, k);
     this.camLook.lerp(look, k);

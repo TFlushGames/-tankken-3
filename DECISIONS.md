@@ -97,3 +97,14 @@ Miejsca, w których specyfikacja zostawiała wybór, i co wybrano.
 - `PCFSoftShadowMap` usunięto w three r18x, używany jest `PCFShadowMap`.
 - Ślady gąsienic malowane są na teksturze canvas nałożonej na arenę.
 - Odłamki (fartuchy, wieża przy K.O.) i decale trafień są czysto kosmetyczne.
+
+## Wersja 7 – koniec meczu z finisherem
+
+- Ostatnie K.O. meczu: spowolnienie, napis K.O., krótsza pauza (`FINAL_KO_FRAMES = 120`), potem przerywnik.
+- Przerywnik (`src/render/cinematic.ts`) jest czysto wizualny – poza symulacją, więc nie psuje determinizmu.
+  Online startuje dopiero, gdy koniec meczu wynika z potwierdzonych wejść (brak cofnięć), a symulacja dalej tyka.
+- Każdy czołg ma finisher: MAMMOTH „Home Run” (wybicie za horyzont), THUNDER „Thunderclap”,
+  WASP „Hornet Swarm”, COBRA „Drilled!”. Wstęp: zbliżenie w stylu anime z liniami prędkości i świstem.
+- Po akcji zwycięzca w pozie spoczynkowej (kamera nisko, czołg w prawej części kadru) i menu:
+  Rematch / Character select / Main menu (online: Leave room). Koniec z zapętlonym resetem meczu.
+- Po wygranej rundzie zwycięzca robi krótką pozę (lufa w górę, wieża tańczy), kamera na zwycięzcę.

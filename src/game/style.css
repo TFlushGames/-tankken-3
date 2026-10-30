@@ -194,3 +194,22 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
   .fd-panel { display: none; }
   .menu { background: rgba(6,7,10,0.7); }
 }
+
+/* ---------- finisher: kinowe pasy, napisy, menu końca meczu ---------- */
+.cine { position: fixed; inset: 0; pointer-events: none; z-index: 40; }
+.letterbox { position: absolute; left: 0; right: 0; height: 0; background: #07060a; animation: lb-in .45s var(--ease) forwards; }
+.letterbox.top { top: 0; }
+.letterbox.bottom { bottom: 0; }
+@keyframes lb-in { to { height: 11vh; } }
+.cine-caption { position: absolute; left: 50%; top: 18vh; transform: translateX(-50%) skewX(-8deg); font-family: 'Chakra Petch', sans-serif; font-weight: 700; font-size: clamp(22px, 3.4vw, 46px); letter-spacing: .32em; color: #ffe9c9; text-shadow: 0 0 18px rgba(255,140,60,.55), 0 3px 0 #2a1208; white-space: nowrap; animation: cap-in 2.6s var(--ease) forwards; }
+.cine-caption.big { top: 40vh; font-size: clamp(54px, 10vw, 150px); letter-spacing: .06em; color: #fff; -webkit-text-stroke: 3px #3b0d05; text-shadow: 0 0 40px rgba(255,90,30,.9), 6px 6px 0 #c2361a; animation: cap-big 1.3s cubic-bezier(.2,1.6,.4,1) forwards; }
+@keyframes cap-in { 0% { opacity: 0; letter-spacing: .9em; } 15% { opacity: 1; letter-spacing: .32em; } 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes cap-big { 0% { opacity: 0; transform: translateX(-50%) scale(2.6) skewX(-8deg); } 20% { opacity: 1; transform: translateX(-50%) scale(1) skewX(-8deg); } 80% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) scale(1.15) skewX(-8deg); } }
+.end-menu { position: absolute; left: 6vw; bottom: 16vh; display: flex; flex-direction: column; gap: 6px; min-width: 300px; pointer-events: auto; animation: end-in .5s var(--ease) both; }
+.end-title { font-family: 'Chakra Petch', sans-serif; font-weight: 700; font-size: clamp(40px, 6vw, 84px); line-height: .95; color: #fff; transform: skewX(-8deg); text-shadow: 0 0 30px rgba(255,122,47,.6), 4px 4px 0 #c2361a; }
+.end-sub { font-family: "Chakra Petch", sans-serif; letter-spacing: .4em; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,.8); margin: 0 0 18px 4px; font-weight: 600; }
+.end-status { min-height: 1.4em; margin-top: 8px; color: #ffd9a8; font-size: 14px; letter-spacing: .08em; }
+@keyframes end-in { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: none; } }
+@media (max-width: 600px) { .end-menu { left: 16px; right: 16px; min-width: 0; } }
+.speedlines { position: absolute; inset: 0; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0) 0deg 4deg, rgba(255,255,255,.35) 4.4deg, rgba(255,255,255,0) 5deg 9deg); -webkit-mask-image: radial-gradient(ellipse at center, transparent 32%, #000 75%); mask-image: radial-gradient(ellipse at center, transparent 32%, #000 75%); animation: speed 1.4s linear forwards; mix-blend-mode: screen; }
+@keyframes speed { 0% { opacity: 0; transform: scale(1.3) rotate(0deg); } 15% { opacity: 1; } 60% { opacity: .8; transform: scale(1) rotate(3deg); } 100% { opacity: 0; transform: scale(1) rotate(5deg); } }

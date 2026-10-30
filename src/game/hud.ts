@@ -33,8 +33,6 @@ export class Hud {
   private sub: HTMLElement;
   private debug: HTMLElement;
   private lastBanner = '';
-  /** Co robi Esc po meczu (lokalnie: menu, online: powrót do wyboru czołgu). */
-  escHint = 'menu';
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud', parent);
@@ -95,7 +93,7 @@ export class Hud {
     this.timer.textContent = training ? '∞' : String(Math.ceil(s.timer / 60));
 
     let banner = '';
-    let sub = '';
+    const sub = '';
     if (s.phase === PH_INTRO) {
       banner = s.phaseFrame < FIGHT_CALL_FRAME ? `ROUND ${s.round}` : 'FIGHT!';
     } else if (s.phase === PH_FIGHT && s.phaseFrame < 30 && !training) {
@@ -103,12 +101,13 @@ export class Hud {
     } else if (s.phase === PH_KO) {
       const ko = s.fighters.some((f) => f.hp <= 0);
       banner = ko ? 'K.O.' : 'TIME!';
-      if (s.phaseFrame > 90) {
+      const final = s.roundWinner >= 0 && s.fighters[s.roundWinner]!.wins + 1 >= s.opts.roundsToWin;
+      if (s.phaseFrame > 90 && !final) {
         banner = s.roundWinner >= 0 ? `${TANKS[s.fighters[s.roundWinner]!.tank]!.name} WINS THE ROUND` : 'DRAW';
       }
     } else if (s.phase === PH_MATCH_END) {
-      banner = `PLAYER ${s.winner + 1} WINS`;
-      sub = `${TANKS[s.fighters[s.winner]!.tank]!.name} • Enter / T – rematch • Esc – ${this.escHint}`;
+      // Za chwilę przerywnik z finisherem – zostaje samo K.O.
+      banner = 'K.O.';
     }
     if (banner !== this.lastBanner) {
       this.banner.textContent = banner;

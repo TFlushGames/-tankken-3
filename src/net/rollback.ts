@@ -41,6 +41,10 @@ export class RollbackSession {
   private localHashes = new Map<number, number>();
   private remoteHashes = new Map<number, number>();
   private ticks = 0;
+  /** Ostatnia klatka policzona wyłącznie z potwierdzonych wejść. */
+  get confirmedFrame(): number {
+    return this.confirmed;
+  }
   /** Zdarzenia z ostatnich kroków (także z resymulacji) – renderer je deduplikuje. */
   events: SimEvent[] = [];
 
