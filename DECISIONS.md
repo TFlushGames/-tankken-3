@@ -15,6 +15,13 @@ Miejsca, w których specyfikacja zostawiała wybór, i co wybrano.
 - **Przechyły**: ataki mają mocniejsze uniesienie/opuszczenie przodu kadłuba (pancerny zrzut nurkuje nosem ~28°). Pochylenie w locie i salto po wyrzucie liczy renderer z prędkości i stanu – nie wpływa na symulację.
 - **Lufa**: oś elewacji (czopy) jest z przodu wieży, a lufa wysuwa się teleskopowo z kołyski przymocowanej do jarzma – w symulacji i w modelu, więc lufa nigdy nie odstaje od wieży.
 
+## Wersja 4
+- Nazwa gry: **Tankken 3**; wszystkie teksty w grze po angielsku (nazwy czołgów: MAMMOTH, THUNDER, WASP, COBRA). Dokumentacja i komentarze w kodzie zostają po polsku.
+- **Online**: zamiast własnego serwera Node (wymagałby konta na hostingu) – WebRTC P2P przez PeerJS z darmowym publicznym serwerem sygnalizacyjnym; dzięki temu gra online działa na GitHub Pages. Netcode od razu jako rollback (etap „lockstep” pominięty – rollback go zastępuje). Wejścia wysyłane z redundancją i potwierdzeniem (`ack`), więc po krótkim zerwaniu brakujące klatki są dosyłane.
+- **Muzyka**: biblioteki z darmowymi dźwiękami nie są osiągalne z tego środowiska (dostępny tylko rejestr npm), więc muzyka jest syntezowana sekwencerem (osobne utwory do menu i walki). Opcjonalne pliki w `public/audio/` mają pierwszeństwo.
+- **Ciężar ciosów**: kadłub skręca i odchyla się na zamachu, pochyla przy uderzeniu; mocne ciosy (≥70 obrażeń) na moment odrywają gąsienice od ziemi; trafiony czołg podskakuje i przechyla się do tyłu (amortyzacja). Zatrzymanie przy trafieniu i wstrząs kamery rosną z masą atakującego; wybrzmienie ruchów skaluje się bezwładnością.
+- Renderer nie używa już sprężyn (przy nierównym FPS „galaretowały”) – tylko tłumienie wykładnicze z ograniczonym krokiem czasu.
+
 ## Wersja 3: „ninja w pancerzu”
 - Trafienie **nie zależy od wysokości** sylwetki: gdy obaj stoją na ziemi, hitbox jest rzutowany na wysokość przeciwnika (decyduje zasięg i poziom ciosu, jak w bijatykach). Lufa dodatkowo automatycznie celuje w środek sylwetki przeciwnika.
 - Kadłub ma w symulacji pełny przewrót przód–tył (`bodyPitch`) – hurtboxy i hitboxy obracają się razem z nim, więc salta i stójki na lufie trafiają tam, gdzie widać.

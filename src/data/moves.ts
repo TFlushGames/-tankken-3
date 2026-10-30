@@ -6,8 +6,8 @@ export const MOVES: MoveDef[] = [
   // ---------------------------------------------------------------- akrobacje (RUN + przycisk)
   {
     id: 'vault',
-    name: 'Skok o lufie',
-    desc: 'Lufa odpycha czołg od ziemi, czołg robi salto w przód i spada gąsienicami na przeciwnika – fala uderzeniowa przy lądowaniu.',
+    name: 'Barrel Vault',
+    desc: 'The barrel pole-vaults the tank into a front flip that lands tracks-first on the opponent, with a shockwave on landing.',
     input: { sequence: [], button: 'HK', window: 1, withRun: true },
     stance: ['stand', 'run', 'crouch'],
     level: 'overhead',
@@ -28,8 +28,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'handstand',
-    name: 'Młynek na lufie',
-    desc: 'Czołg wbija lufę w ziemię, staje na niej ukośnie i kręci się jak bąk – kadłub zamiata wszystko dookoła.',
+    name: 'Barrel Spin',
+    desc: 'Plants the barrel, balances on it and spins like a top – the hull sweeps everything around.',
     input: { sequence: [], button: 'HP', window: 1, withRun: true },
     stance: ['stand', 'run', 'crouch'],
     level: 'mid',
@@ -51,8 +51,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'blastjump',
-    name: 'Wybicie wystrzałem',
-    desc: 'Strzał w ziemię pod sobą: wybuch rani bliskiego przeciwnika, a odrzut wyrzuca czołg saltem w powietrze.',
+    name: 'Blast Jump',
+    desc: 'Fires into the ground: the blast hurts anyone close and the recoil flips the tank into the air.',
     input: { sequence: [], button: 'LK', window: 1, withRun: true },
     stance: ['stand', 'run', 'crouch'],
     level: 'mid',
@@ -74,8 +74,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'dashram',
-    name: 'Szarża',
-    desc: 'Błyskawiczny doskok z dźgnięciem lufą na końcu.',
+    name: 'Charge',
+    desc: 'Lightning dash that ends in a barrel thrust.',
     input: { sequence: [], button: 'LP', window: 1, withRun: true },
     stance: ['stand', 'run', 'crouch'],
     level: 'mid',
@@ -98,8 +98,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'air_shot',
-    name: 'Strzał w locie',
-    desc: 'Wystrzał w powietrzu: pocisk leci wzdłuż lufy, a odrzut odbija czołg do tyłu i w górę.',
+    name: 'Air Shot',
+    desc: 'Fires in mid-air: the shell flies down the barrel line and the recoil kicks the tank up and back.',
     input: { sequence: [], button: 'HP', window: 1, withRun: true },
     stance: ['air'],
     level: 'mid',
@@ -119,8 +119,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'air_shot_lp',
-    name: 'Strzał w locie',
-    desc: 'Jak wyżej – RUN + LP w powietrzu.',
+    name: 'Air Shot',
+    desc: 'Same as above – RUN + LP in the air.',
     input: { sequence: [], button: 'LP', window: 1, withRun: true },
     stance: ['air'],
     level: 'mid',
@@ -140,12 +140,12 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'launcher',
-    name: 'Podbicie',
+    name: 'Launcher',
     chains: [
       { button: 'HP', to: 'hp2' },
       { button: 'LP', to: 'lp2' },
     ],
-    desc: 'Lufa z dołu gwałtownie w górę – wyrzuca przeciwnika w powietrze.',
+    desc: 'Barrel sweeps up from below – launches the opponent into the air.',
     input: { sequence: ['D'], button: 'HP', window: 4 },
     stance: ['stand', 'crouch'],
     level: 'mid',
@@ -165,8 +165,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'spin',
-    name: 'Obrót 360°',
-    desc: 'Pełny obrót wieży. Wolny start, duży odrzut, łapie uniki.',
+    name: '360° Spin',
+    desc: 'Full turret rotation. Slow start, huge knockback, catches sidesteps.',
     input: { sequence: ['B'], button: 'HK', window: 4 },
     stance: ['stand'],
     level: 'high',
@@ -186,8 +186,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'sweep',
-    name: 'Podcięcie',
-    desc: 'Piwot kadłuba na gąsienicach – podcina i przewraca.',
+    name: 'Sweep',
+    desc: 'Hull pivots on its tracks – sweeps the legs and knocks down.',
     input: { sequence: ['B'], button: 'LK', window: 4 },
     stance: ['stand', 'crouch'],
     level: 'low',
@@ -208,8 +208,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'throw',
-    name: 'Rzut',
-    desc: 'Lufa zahacza pod kadłub i przerzuca przeciwnika za siebie. Nieblokowalny; ucieczka: LP w oknie 6 klatek.',
+    name: 'Throw',
+    desc: 'Hooks the barrel under the hull and flips the opponent behind you. Unblockable; escape with LP within 6 frames.',
     input: { sequence: ['F'], button: 'LP', window: 3, strict: true },
     stance: ['stand'],
     level: 'mid',
@@ -226,8 +226,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'd_lp',
-    name: 'Niskie dźgnięcie',
-    desc: 'Szybkie pchnięcie lufą nisko z kucnięcia.',
+    name: 'Low Jab',
+    desc: 'Quick low barrel jab from a crouch.',
     input: { sequence: ['D'], button: 'LP', window: 4 },
     stance: ['crouch', 'stand'],
     level: 'low',
@@ -246,8 +246,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'd_lk',
-    name: 'Niskie szarpnięcie',
-    desc: 'Krótkie szarpnięcie gąsienicami w kucnięciu.',
+    name: 'Low Lurch',
+    desc: 'Short crouching lurch on the tracks.',
     input: { sequence: ['D'], button: 'LK', window: 4 },
     stance: ['crouch', 'stand'],
     level: 'low',
@@ -266,8 +266,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'd_hk',
-    name: 'Niski taran',
-    desc: 'Mocniejsze, niskie pchnięcie całym kadłubem.',
+    name: 'Low Ram',
+    desc: 'A heavier low shove with the whole hull.',
     input: { sequence: ['D'], button: 'HK', window: 4 },
     stance: ['crouch', 'stand'],
     level: 'low',
@@ -286,8 +286,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'air_p',
-    name: 'Uderzenie z powietrza',
-    desc: 'Zamach lufą w dół w locie.',
+    name: 'Air Strike',
+    desc: 'Downward barrel swing in mid-air.',
     input: { sequence: [], button: 'HP', window: 1 },
     stance: ['air'],
     level: 'overhead',
@@ -306,8 +306,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'air_lp',
-    name: 'Uderzenie z powietrza',
-    desc: 'Szybkie dziobnięcie lufą w dół w locie.',
+    name: 'Air Strike',
+    desc: 'Quick downward barrel peck in mid-air.',
     input: { sequence: [], button: 'LP', window: 1 },
     stance: ['air'],
     level: 'overhead',
@@ -326,8 +326,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'air_k',
-    name: 'Pancerny zrzut',
-    desc: 'Lądowanie całym kadłubem – fala uderzeniowa przy ziemi.',
+    name: 'Armor Drop',
+    desc: 'Slams down with the whole hull – a shockwave along the ground.',
     input: { sequence: [], button: 'HK', window: 1 },
     stance: ['air'],
     level: 'overhead',
@@ -347,8 +347,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'air_lk',
-    name: 'Pancerny zrzut',
-    desc: 'Lądowanie całym kadłubem – fala uderzeniowa przy ziemi.',
+    name: 'Armor Drop',
+    desc: 'Slams down with the whole hull – a shockwave along the ground.',
     input: { sequence: [], button: 'LK', window: 1 },
     stance: ['air'],
     level: 'overhead',
@@ -367,12 +367,12 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'lp',
-    name: 'Dźgnięcie',
+    name: 'Jab',
     chains: [
       { button: 'LP', to: 'lp2' },
       { button: 'HP', to: 'hp' },
     ],
-    desc: 'Lufa wysuwa się do przodu na mechanizmie odrzutu. Najszybszy cios.',
+    desc: 'The barrel shoots forward on its recoil slide. The fastest hit.',
     input: { sequence: [], button: 'LP', window: 1 },
     stance: ['stand', 'run'],
     level: 'high',
@@ -391,9 +391,9 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'hp',
-    name: 'Zamach',
+    name: 'Swing',
     chains: [{ button: 'HP', to: 'hp2' }],
-    desc: 'Wieża cofa się o ~25° i tnie poziomo.',
+    desc: 'The turret winds back ~25° and slashes sideways.',
     input: { sequence: [], button: 'HP', window: 1 },
     stance: ['stand', 'run'],
     level: 'high',
@@ -412,12 +412,12 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'lk',
-    name: 'Wypad gąsienic',
+    name: 'Track Lunge',
     chains: [
       { button: 'LK', to: 'lk2' },
       { button: 'HP', to: 'launcher' },
     ],
-    desc: 'Kadłub szarpie nisko do przodu.',
+    desc: 'The hull lurches low and forward.',
     input: { sequence: [], button: 'LK', window: 1 },
     stance: ['stand', 'run'],
     level: 'low',
@@ -436,9 +436,9 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'hk',
-    name: 'Cios z góry',
+    name: 'Overhead Smash',
     chains: [{ button: 'HK', to: 'hk2' }],
-    desc: 'Lufa na maksymalnej elewacji uderza w dół, przód kadłuba lekko się unosi.',
+    desc: 'Barrel raised to full elevation crashes down while the nose rears up.',
     input: { sequence: [], button: 'HK', window: 1 },
     stance: ['stand', 'run'],
     level: 'mid',
@@ -458,8 +458,8 @@ export const MOVES: MoveDef[] = [
   // ---------------------------------------------------------------- kontynuacje kombo
   {
     id: 'lp2',
-    name: 'Podwójne dźgnięcie',
-    desc: 'Lufa cofa się i znów strzela do przodu, czołg dociąga za ciosem.',
+    name: 'Double Jab',
+    desc: 'The barrel snaps back and fires forward again as the tank follows through.',
     chainOnly: true,
     chains: [
       { button: 'LP', to: 'lp3' },
@@ -483,8 +483,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'lp3',
-    name: 'Taran z dźgnięciem',
-    desc: 'Całym kadłubem do przodu i pchnięcie z rozpędu – odrzuca.',
+    name: 'Ram Thrust',
+    desc: 'Drives the whole hull forward into a running thrust – knocks back.',
     chainOnly: true,
     chains: [{ button: 'HP', to: 'hp3' }],
     input: { sequence: [], button: 'LP', window: 1 },
@@ -505,8 +505,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'hp2',
-    name: 'Zamach zwrotny',
-    desc: 'Wieża wykorzystuje pęd i tnie z powrotem w drugą stronę.',
+    name: 'Backhand',
+    desc: 'The turret uses its momentum to slash back the other way.',
     chainOnly: true,
     chains: [
       { button: 'HP', to: 'hp3' },
@@ -530,8 +530,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'hp3',
-    name: 'Młot',
-    desc: 'Lufa w górę i miażdżący cios z góry z całym kadłubem – przewraca.',
+    name: 'Hammer',
+    desc: 'Barrel up, then a crushing overhead with the whole hull behind it – knocks down.',
     chainOnly: true,
     input: { sequence: [], button: 'HP', window: 1 },
     stance: ['stand'],
@@ -552,8 +552,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'lk2',
-    name: 'Szarpnięcie zwrotne',
-    desc: 'Kadłub skręca na gąsienicach i uderza bokiem.',
+    name: 'Pivot Check',
+    desc: 'The hull twists on its tracks and hits with its flank.',
     chainOnly: true,
     chains: [
       { button: 'LK', to: 'lk3' },
@@ -578,8 +578,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'lk3',
-    name: 'Wjazd na rampę',
-    desc: 'Przód kadłuba unosi się i podrzuca przeciwnika – otwiera kombo w powietrzu.',
+    name: 'Ramp Launcher',
+    desc: 'The nose rears up and pops the opponent into the air – starts an air combo.',
     chainOnly: true,
     chains: [{ button: 'HP', to: 'hp2' }],
     input: { sequence: [], button: 'LK', window: 1 },
@@ -601,8 +601,8 @@ export const MOVES: MoveDef[] = [
   },
   {
     id: 'hk2',
-    name: 'Podwójny młot',
-    desc: 'Lufa odbija się od celu i spada drugi raz, mocniej.',
+    name: 'Double Hammer',
+    desc: 'The barrel bounces off and comes down again, harder.',
     chainOnly: true,
     chains: [{ button: 'HK', to: 'spin' }],
     input: { sequence: [], button: 'HK', window: 1 },

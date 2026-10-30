@@ -25,6 +25,9 @@ const BUTTON_MASK = 0xff0;
 const THROW_MOVE = MOVE_INDEX['throw']!;
 /** Podbicie przy trafieniu w powietrzu (mm/klatkę). */
 const JUGGLE_LIFT = 330;
+/** Podskok przy mocnym ciosie i przy przyjęciu trafienia (mm/klatkę). */
+const STRIKE_HOP = 75;
+const HIT_HOP = 60;
 
 // Tolerancje osiągnięcia celu przez napędy.
 const TOL_YAW = 250;
@@ -384,7 +387,14 @@ function enterKey(s: GameState, i: number): void {
     }
     emit(s, k.fire === 'blast' ? EV_BLAST : EV_FIRE, i, tip, m.damage);
   }
-  if (k.active && !k.fire) emit(s, EV_WHOOSH, i, barrelTip(f, t), m.damage);
+  if (k.active && !k.fire) {
+    emit(s, EV_WHOOSH, i, barrelTip(f, t), m.damage);
+    // Mocny cios odrywa gąsienice od ziemi – czołg „wchodzi” w uderzenie całym ciężarem.
+    if (f.y <= 0 && k.bodyPitch === null && !k.plant && m.damage >= 70) {
+      f.vy = Math.max(f.vy, Math.trunc((STRIKE_HOP * clamp(t.kickScale, 700, 1400)) / 1000));
+      f.y = 1;
+    }
+  }
 }
 
 /** Cel napędów w bieżącej fazie ataku (null = pozycja spoczynkowa). */
@@ -395,7 +405,11 @@ function moveTargets(f: FighterState, t: TankParams, rest: Targets): Targets {
   const sign = yawSign(f);
   // Niszczyciel bez wieży: zamach lufą robi cały kadłub (obrót na gąsienicach).
   const casemate = t.def.casemate === true;
-  let pivot = k.pivot === null ? 0 : k.pivot * sign;
+  // „Mowa ciała”: przy zamachu wieżą kadłub skręca razem z nią (jak biodra przy ciosie),
+  // na zamachu odchyla się do tyłu, a przy uderzeniu pochyla do przodu.
+  // Kadłub skręca tylko na zamachu; przy uderzeniu wraca do zera, dokładając prędkości ciosowi.
+  let pivot = k.pivot !== null ? k.pivot * sign : k.yaw !== null && !casemate && !k.active ? Math.trunc((k.yaw * 35) / 100) * sign : 0;
+  const autoLift = k.active ? -450 : 550;
   let spin = false;
   if (k.hullSpin !== null) {
     pivot = f.spinBase + k.hullSpin * sign;
@@ -408,9 +422,12 @@ function moveTargets(f: FighterState, t: TankParams, rest: Targets): Targets {
     yaw: k.yaw === null || casemate ? rest.yaw : f.moveBaseYaw + k.yaw * sign,
     pitch: clamp(k.pitch === null ? rest.pitch : k.pitch + rest.aimPitch, t.pitchMin, t.pitchMax),
     ext: k.ext === null ? 0 : k.ext,
-    lift: k.lift === null ? 0 : k.lift,
+    lift: k.lift === null ? (k.bodyPitch === null ? autoLift : 0) : k.lift,
     pivot,
     slam: k.slam,
+    // Automatyczna „mowa ciała” zawsze hamuje przed celem (nie przelatuje).
+    slamLift: k.slam && k.lift !== null,
+    slamPivot: k.slam && (k.pivot !== null || spin),
     body: k.bodyPitch === null ? null : k.bodyPitch,
     spin,
     aimPitch: rest.aimPitch,
@@ -428,6 +445,8 @@ interface Targets {
   body: number | null;
   /** Piwot napędzany jak młynek (pełne obroty). */
   spin: boolean;
+  slamLift: boolean;
+  slamPivot: boolean;
   aimPitch: number;
 }
 
@@ -487,7 +506,8 @@ function advanceMove(s: GameState, i: number, tg: Targets): void {
     }
     return;
   }
-  if (f.keyFrame >= m.def.recoveryPad) endMove(f);
+  // Wybrzmienie ciosu: cięższy czołg dłużej „dochodzi do siebie”.
+  if (f.keyFrame * t.kickScale >= m.def.recoveryPad * 1000) endMove(f);
 }
 
 function endMove(f: FighterState): void {
@@ -748,6 +768,8 @@ function updateFighter(s: GameState, i: number, input: number): void {
     lift: f.state === ST_DASH ? (f.jumpDir > 0 ? 700 : -500) : 0,
     pivot: 0,
     slam: false,
+    slamLift: false,
+    slamPivot: false,
     body: null,
     spin: false,
     aimPitch,
@@ -759,14 +781,14 @@ function updateFighter(s: GameState, i: number, input: number): void {
   [f.turretYaw, f.turretVel] = drive(f.turretYaw, f.turretVel, tg.yaw, t.turretMaxVel, t.turretAccel, sl);
   [f.pitch, f.pitchVel] = drive(f.pitch, f.pitchVel, clamp(tg.pitch, t.pitchMin, t.pitchMax), t.pitchMaxVel, t.pitchAccel, sl);
   [f.ext, f.extVel] = drive(f.ext, f.extVel, tg.ext, t.extMaxVel, t.extAccel, sl);
-  [f.lift, f.liftVel] = drive(f.lift, f.liftVel, tg.lift, t.liftMaxVel, t.liftAccel, sl);
-  if (tg.spin) [f.pivot, f.pivotVel] = drive(f.pivot, f.pivotVel, tg.pivot, t.spinMaxVel, t.spinAccel, sl);
-  else [f.pivot, f.pivotVel] = drive(f.pivot, f.pivotVel, tg.pivot, t.pivotMaxVel, t.pivotAccel, sl);
+  [f.lift, f.liftVel] = drive(f.lift, f.liftVel, tg.lift, t.liftMaxVel, t.liftAccel, tg.slamLift);
+  if (tg.spin) [f.pivot, f.pivotVel] = drive(f.pivot, f.pivotVel, tg.pivot, t.spinMaxVel, t.spinAccel, tg.slamPivot);
+  else [f.pivot, f.pivotVel] = drive(f.pivot, f.pivotVel, tg.pivot, t.pivotMaxVel, t.pivotAccel, tg.slamPivot);
   // Przewrót kadłuba: sterowany ruchem albo swobodnie dokręca się do pełnego obrotu.
   let bodyTarget: number;
   if (tg.body !== null) bodyTarget = tg.body;
-  else if (f.bodyPitchVel < -50) bodyTarget = -36000 * Math.ceil(-f.bodyPitch / 36000 + 0.001);
-  else if (f.bodyPitchVel > 50) bodyTarget = 36000 * Math.ceil(f.bodyPitch / 36000 + 0.001);
+  else if (f.bodyPitchVel < -(t.flipMaxVel >> 1)) bodyTarget = -36000 * Math.ceil(-f.bodyPitch / 36000 + 0.001);
+  else if (f.bodyPitchVel > t.flipMaxVel >> 1) bodyTarget = 36000 * Math.ceil(f.bodyPitch / 36000 + 0.001);
   else bodyTarget = 36000 * Math.round(f.bodyPitch / 36000);
   if (tg.body === null && f.y <= 0) bodyTarget = 36000 * Math.round(f.bodyPitch / 36000);
   [f.bodyPitch, f.bodyPitchVel] = drive(f.bodyPitch, f.bodyPitchVel, bodyTarget, t.flipMaxVel, t.flipAccel, sl && tg.body !== null);
@@ -1015,6 +1037,11 @@ interface PendingHit {
   point: Point3;
 }
 
+/** Zatrzymanie przy trafieniu zależne od masy atakującego – ciężki cios „siedzi” dłużej. */
+function weightedHitstop(base: number, at: TankParams): number {
+  return Math.max(2, Math.trunc((base * (650 + Math.trunc(at.mass / 85))) / 1000));
+}
+
 function resolveHit(s: GameState, h: PendingHit): void {
   const i = h.attacker;
   const a = s.fighters[i]!;
@@ -1047,7 +1074,8 @@ function resolveHit(s: GameState, h: PendingHit): void {
     const push = Math.trunc((m.knockback * massFactor) / 2000) + 20;
     const [along, perp] = axisVel(d, aim);
     setAxisVel(d, aim, Math.max(along, push), perp);
-    s.hitstop = Math.max(s.hitstop, Math.max(3, m.def.hitstop - 3));
+    s.hitstop = Math.max(s.hitstop, Math.max(3, weightedHitstop(m.def.hitstop, at) - 3));
+    d.bodyPitchVel = clamp(Math.trunc(push * 3), 80, dt.flipMaxVel >> 2);
     emit(s, EV_BLOCK, i, h.point, m.damage);
     return;
   }
@@ -1087,7 +1115,13 @@ function resolveHit(s: GameState, h: PendingHit): void {
   const [, perp] = axisVel(d, aim);
   setAxisVel(d, aim, kb, perp);
   d.suspVel += Math.trunc(kb / 2);
-  s.hitstop = Math.max(s.hitstop, m.def.hitstop);
+  // Amortyzacja: trafiony czołg odrywa się od ziemi i odchyla do tyłu (przód w górę).
+  if (d.state === ST_HITSTUN) {
+    d.vy = Math.max(d.vy, HIT_HOP + Math.trunc(kb / 3));
+    d.y = Math.max(d.y, 1);
+  }
+  d.bodyPitchVel = clamp(Math.trunc((kb * 6 * massFactor) / 1000), 150, dt.flipMaxVel >> 1) * (d.facingRight ? 1 : 1);
+  s.hitstop = Math.max(s.hitstop, weightedHitstop(m.def.hitstop, at));
   emit(s, EV_HIT, i, h.point, dmg);
 }
 
@@ -1123,8 +1157,11 @@ function integrate(s: GameState, i: number): void {
         f.y = 1;
       } else if (f.state === ST_AIRHIT) setState(f, ST_KNOCKDOWN);
       else if (f.state === ST_ATTACK) {
-        const k = t.moves[f.move]!.keys[f.moveKey];
-        if (!k || !k.untilLanding) {
+        const mv = t.moves[f.move]!;
+        const k = mv.keys[f.moveKey];
+        // Tylko ataki powietrzne kończą się lądowaniem; naziemny cios z podskokiem trwa dalej.
+        const airMove = mv.def.stance.includes('air') && !mv.def.stance.includes('stand');
+        if (airMove && (!k || !k.untilLanding)) {
           f.move = -1;
           setState(f, ST_LAND);
           f.stateFrame = -4;
@@ -1185,7 +1222,7 @@ function pushApart(s: GameState): void {
   if (airA !== airB) {
     const j = airA ? a : b;
     const vn = Math.trunc((j.vx * nx + j.vz * nz) / 1000) * (airA ? 1 : -1);
-    if (vn > 0 && d < Math.trunc(minD / 2)) {
+    if (vn > 0 && (d < Math.trunc((minD * 3) / 4) || j.state === ST_DASH)) {
       // Leci „przez” przeciwnika – przerzuć na drugą stronę.
       overlap = minD + d;
       if (airA) {

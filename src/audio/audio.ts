@@ -5,6 +5,7 @@ import {
 } from '../sim/constants';
 import type { GameState, SimEvent } from '../sim/types';
 import { TANK_PARAMS } from '../sim/params';
+import { MusicPlayer } from './music';
 
 interface EngineVoice {
   osc: OscillatorNode;
@@ -24,6 +25,9 @@ export class AudioEngine {
   private noise: AudioBuffer | null = null;
   private engines: EngineVoice[] = [];
   private volume = 0.7;
+  private musicVolume = 0.6;
+  private music: MusicPlayer | null = null;
+  private wantMusic: 'menu' | 'fight' | null = null;
 
   /** Kontekst audio można utworzyć dopiero po geście użytkownika. */
   unlock(): void {
@@ -45,6 +49,22 @@ export class AudioEngine {
     this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this.music = new MusicPlayer(this.ctx, this.ctx.destination, this.noise);
+    this.music.setVolume(this.musicVolume);
+    if (this.wantMusic) this.music.play(this.wantMusic);
+  }
+
+  /** Muzyka w tle: spokojna w menu, napędzająca w walce. */
+  playMusic(name: 'menu' | 'fight' | null): void {
+    this.wantMusic = name;
+    if (!this.music) return;
+    if (name) this.music.play(name);
+    else this.music.stop();
+  }
+
+  setMusicVolume(v: number): void {
+    this.musicVolume = v;
+    this.music?.setVolume(v);
   }
 
   setVolume(v: number): void {
@@ -135,11 +155,12 @@ export class AudioEngine {
       e.osc.frequency.setTargetAtTime(base * (1 + speed * 1.4), now, 0.08);
       e.osc2.frequency.setTargetAtTime(base * 1.5 * (1 + speed * 1.4), now, 0.08);
       e.filter.frequency.setTargetAtTime(300 + speed * 900, now, 0.1);
-      e.gain.gain.setTargetAtTime(f.hp > 0 ? 0.05 + speed * 0.06 : 0, now, 0.1);
+      // Silnik słychać głównie przy ruchu – bez ciągłego warkotu w tle.
+      e.gain.gain.setTargetAtTime(f.hp > 0 ? 0.008 + speed * 0.045 : 0, now, 0.1);
       const tv = Math.abs(f.turretVel) / t.turretMaxVel;
       e.whine.frequency.setTargetAtTime(180 + tv * 900, now, 0.03);
-      e.whineGain.gain.setTargetAtTime(Math.min(0.06, tv * 0.07), now, 0.03);
-      e.rattleGain.gain.setTargetAtTime(Math.min(0.12, speed * 0.14), now, 0.05);
+      e.whineGain.gain.setTargetAtTime(Math.min(0.035, tv * 0.04), now, 0.03);
+      e.rattleGain.gain.setTargetAtTime(Math.min(0.06, speed * 0.07), now, 0.05);
       e.rattleFilter.frequency.setTargetAtTime(500 + speed * 1200, now, 0.05);
     }
   }

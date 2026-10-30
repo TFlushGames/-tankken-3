@@ -1,4 +1,4 @@
-# Stalowy Pojedynek
+# Tankken 3
 
 Przeglądarkowa bijatyka 1 na 1, w której walczą czołgi. Lufa służy za ręce i miecz, kadłub i gąsienice za nogi. Grafika 3D (three.js), wszystkie modele, tekstury i dźwięki są generowane z kodu. Gra nie używa żadnych zewnętrznych plików.
 
@@ -87,6 +87,20 @@ tests       testy (vitest)
 4. Ruch tylko dla jednego czołgu: `moveOverrides` w `src/data/tanks.ts`.
 
 Bufor wejść trzyma 60 ostatnich klatek z kierunkami przeliczonymi na przód/tył, więc kombosy i ciosy specjalne z sekwencji są już obsługiwane przez `sequenceMatches()`.
+
+## Gra online
+
+Menu → **Online** → **Create room** daje kod i link (`…/?room=KOD`). Drugi gracz otwiera link (albo wpisuje kod) i obaj trafiają do lobby: wybór czołgu, **Ready**, walka. Rewanż odbywa się w tym samym pokoju. Każdy gracz steruje klawiszami gracza 1.
+
+- Połączenie jest bezpośrednie (WebRTC P2P). Do zestawienia połączenia używany jest darmowy publiczny serwer PeerJS, więc nie trzeba stawiać własnego serwera, a gra działa na GitHub Pages.
+- Netcode: rollback w stylu GGPO (opóźnienie wejścia 2 klatki, maks. cofanie 8 klatek, wstrzymanie przy większym lagu, synchronizacja tempa, porównanie hasha stanu co 30 klatek). **F2** pokazuje statystyki sieci.
+- Symulacja słabego łącza: `?lag=120&jitter=30&loss=5`.
+- Własny serwer PeerJS (opcjonalnie): `?peerhost=host&peerport=443&peerpath=/&peersecure=1`.
+- W niektórych sieciach (część firmowych i komórkowych) samo P2P się nie zestawi – wtedy potrzebny byłby serwer TURN.
+
+## Muzyka i dźwięk
+
+Muzyka i efekty są generowane na żywo (WebAudio). Jeśli w `public/audio/` pojawią się pliki `music-menu.mp3` / `music-fight.mp3` (np. darmowe utwory CC0), gra użyje ich zamiast syntezy.
 
 ## Wdrożenie na GitHub Pages
 

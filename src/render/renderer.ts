@@ -269,7 +269,9 @@ export class GameRenderer {
         this.sparks.burst(18 + power * 40, { x: p.x, y: p.y, z: p.z, life: 0.35, size: 0.12, color: new THREE.Color(1.0, 0.75, 0.35), gravity: 9, drag: 2 }, 9 + power * 8);
         this.sparks.burst(6, { x: p.x, y: p.y, z: p.z, life: 0.12, size: 0.9 + power, color: new THREE.Color(1, 0.9, 0.7) }, 0.5);
         this.smoke.burst(6, { x: p.x, y: p.y, z: p.z, life: 0.9, size: 0.5, grow: 2, color: new THREE.Color(0.3, 0.28, 0.25), gravity: -0.6, drag: 2 }, 1.5);
-        this.shake.add(0.3 + power * 0.6);
+        // Wstrząs zależny od masy atakującego – ciężki cios czuć mocniej.
+        const am = e.actor >= 0 ? TANK_PARAMS[s.fighters[e.actor]!.tank]!.mass : 35000;
+        this.shake.add((0.25 + power * 0.55) * (0.6 + am / 75000));
         this.impacts.spawn(p, power);
         this.fovKick = Math.max(this.fovKick, 1.5 + power * 4);
         if (power > 0.3 || Math.random() < 0.35) this.comic.show(p, this.camera, power);
@@ -278,8 +280,7 @@ export class GameRenderer {
         if (defender) {
           defender.flash = 1;
           this.addDecal(defender, p);
-          defender.swayVel += (Math.random() - 0.5) * 0.15 * power;
-          defender.rollVel += (Math.random() - 0.5) * 0.2 * power;
+          defender.roll += (Math.random() < 0.5 ? -1 : 1) * 0.06 * power;
           const df = s.fighters[1 - e.actor]!;
           if (df.hp < 250) this.dropSkirt(defender);
         }
@@ -410,12 +411,14 @@ export class GameRenderer {
     // Wieża odlatuje w zwolnionym tempie.
     this.debris.add(v.model.turret, new THREE.Vector3((Math.random() - 0.5) * 3, 11, (Math.random() - 0.5) * 3), new THREE.Vector3(2 + Math.random() * 2, Math.random() * 3, 1.5), 12, 0.45);
     v.model.char();
-    this.comic.show(p.clone().setY(3), this.camera, 1.2, 'KA-BUM!');
+    this.comic.show(p.clone().setY(3), this.camera, 1.2, 'KA-BOOM!');
   }
 
   // ------------------------------------------------------------ klatka
 
-  render(prev: GameState, curr: GameState, alpha: number, dt: number): void {
+  render(prev: GameState, curr: GameState, alpha: number, dtRaw: number): void {
+    // Po powrocie do karty przeglądarki dt bywa ogromne – efekty liczymy z ograniczonym krokiem.
+    const dt = Math.min(dtRaw, 0.05);
     this.time += dt;
     if (curr.round !== this.roundSeen && this.views.length) {
       if (this.roundSeen !== -1) {
@@ -482,16 +485,20 @@ export class GameRenderer {
     v.prevZ = z;
     v.prevYaw = yawCd;
 
-    // Kołysanie kadłuba na zawieszeniu (sprężyna wizualna).
-    const accel = dt > 0 ? (along - v.prevAlong) / Math.max(dt, 1e-3) : 0;
-    v.prevAlong = along;
-    v.swayVel += (-accel * 0.6 - v.sway * 120) * dt;
-    v.swayVel *= Math.exp(-9 * dt);
-    v.sway += v.swayVel * dt * 60;
-    v.sway = THREE.MathUtils.clamp(v.sway, -0.12, 0.12);
-    v.rollVel += -v.roll * 140 * dt;
-    v.rollVel *= Math.exp(-7 * dt);
-    v.roll += v.rollVel * dt * 60;
+    // Przechył od przyspieszania/hamowania: tłumienie wykładnicze (stabilne przy każdym FPS,
+    // bez sprężyn, które przy nierównych klatkach „galaretowały”).
+    const dtc = Math.min(dt, 1 / 30);
+    if (dtc > 0) {
+      const vel = along / Math.max(dt, 1e-3);
+      const acc = (vel - v.prevAlong) / Math.max(dt, 1e-3);
+      v.prevAlong = vel;
+      const target = THREE.MathUtils.clamp(-acc * 0.003, -0.07, 0.07);
+      v.sway += (target - v.sway) * (1 - Math.exp(-8 * dtc));
+      v.roll *= Math.exp(-7 * dtc);
+    }
+    // Spokojny „oddech” na zawieszeniu w postawie bojowej.
+    const idle = b.state === 0 && b.y <= 0 ? Math.sin(this.time * 5 + m.def.mass) * 0.012 : 0;
+    m.body.position.y += idle;
     m.body.rotation.z = lerp(a.lift, b.lift, t) * DEG + v.sway;
     m.body.rotation.x = v.roll;
     if (b.state === ST_KO && !v.destroyed) m.body.rotation.x = 0.05;

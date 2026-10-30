@@ -24,7 +24,7 @@ export function computeFrameData(tank: number): FrameData[] {
     if (def.id === 'throw') {
       out.push({
         id: def.id, name: m.def.name, startup: THROW_STARTUP, active: THROW_ACTIVE, recovery: THROW_RECOVERY,
-        total: THROW_STARTUP + THROW_ACTIVE + THROW_RECOVERY, damage: m.damage, level: 'rzut', kind: 'nieblokowalny',
+        total: THROW_STARTUP + THROW_ACTIVE + THROW_RECOVERY, damage: m.damage, level: 'throw', kind: 'unblockable',
       });
       continue;
     }
@@ -58,7 +58,7 @@ export function computeFrameData(tank: number): FrameData[] {
       total,
       damage: m.damage * m.maxHits,
       level: def.level,
-      kind: def.kind === 'linear' ? 'liniowy' : 'obrotowy',
+      kind: def.kind === 'linear' ? 'linear' : 'rotational',
     });
   }
   return out;

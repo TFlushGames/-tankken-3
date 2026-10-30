@@ -391,8 +391,8 @@ export class SwingTrail {
   }
 }
 
-const WORDS_HEAVY = ['BUM!', 'ŁUP!', 'TRACH!', 'BAM!', 'DZYŃ!'];
-const WORDS_LIGHT = ['PAC!', 'STUK!', 'TUP!', 'BRZĘK!'];
+const WORDS_HEAVY = ['BOOM!', 'WHAM!', 'KRAK!', 'BAM!', 'CLANG!'];
+const WORDS_LIGHT = ['POW!', 'BONK!', 'THUD!', 'CLANK!'];
 
 /** Komiksowe napisy w miejscu trafień (DOM nad płótnem). */
 export class ComicText {

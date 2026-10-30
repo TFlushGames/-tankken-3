@@ -30,7 +30,7 @@ export interface ArenaDef {
 export const ARENAS: ArenaDef[] = [
   {
     id: 'meadow',
-    name: 'Złota łąka',
+    name: 'Golden Meadow',
     skyTop: '#2b3770',
     skyHorizon: '#f2a35e',
     skyBottom: '#c98a5a',
@@ -50,7 +50,7 @@ export const ARENAS: ArenaDef[] = [
   },
   {
     id: 'island',
-    name: 'Wyspa w zatoce',
+    name: 'Island Cove',
     skyTop: '#33507a',
     skyHorizon: '#e8b48a',
     skyBottom: '#7aa0a8',

@@ -2,7 +2,7 @@
   "name": "tankken-3",
   "private": true,
   "version": "0.1.0",
-  "description": "Stalowy Pojedynek – przeglądarkowa bijatyka 1v1 czołgów (Three.js)",
+  "description": "Tankken 3 – 1v1 tank fighting game in the browser (Three.js)",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "peerjs": "1.5.5",
     "three": "0.187.0"
   },
   "devDependencies": {

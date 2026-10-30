@@ -4,9 +4,9 @@ import type { TankDef } from '../sim/types';
 
 export const MAMUT: TankDef = {
   id: 'mamut',
-  name: 'MAMUT',
-  role: 'Ciężki niszczyciel czołgów',
-  desc: 'Wolny, ale miażdżący. Ogromny zasięg lufy, trudny do odepchnięcia. Obrót 360° to powolny, zabójczy młyn.',
+  name: 'MAMMOTH',
+  role: 'Heavy assault tank',
+  desc: 'Slow but crushing. Huge barrel reach, hard to push around. Its 360° spin is a slow, deadly mill.',
   damageMult: 1.3,
   walk: 3.6,
   back: 2.8,
@@ -39,9 +39,9 @@ export const MAMUT: TankDef = {
 
 export const GROM: TankDef = {
   id: 'grom',
-  name: 'GROM',
-  role: 'Czołg średni',
-  desc: 'Wszechstronny. Wieża centralnie, lufa średniej długości z eżektorem. Dobry w każdej odległości.',
+  name: 'THUNDER',
+  role: 'Medium tank',
+  desc: 'All-rounder. Domed turret, mid-length gun. Good at every range.',
   damageMult: 1.0,
   walk: 5.0,
   back: 4.0,
@@ -74,9 +74,9 @@ export const GROM: TankDef = {
 
 export const OSA: TankDef = {
   id: 'osa',
-  name: 'OSA',
-  role: 'Lekki czołg z bliźniaczymi karabinami',
-  desc: 'Mały, szybki, niski. Walczy „dwiema rękami”. Najniżej kuca, najwyżej skacze, ale łatwo go odrzucić.',
+  name: 'WASP',
+  role: 'Light tank with twin guns',
+  desc: 'Small, fast and low. Fights with "two fists". Crouches lowest, jumps highest, but gets knocked around easily.',
   damageMult: 0.7,
   walk: 6.5,
   back: 5.2,
@@ -107,8 +107,8 @@ export const OSA: TankDef = {
   twinBarrels: true,
   moveOverrides: {
     hp: {
-      name: 'Seria z przyłożenia',
-      desc: 'Naprzemienne uderzenia obu luf i krótka seria smugaczy z bliska.',
+      name: 'Point-Blank Burst',
+      desc: 'Alternating jabs from both barrels and a short tracer burst at point-blank range.',
       maxHits: 4,
       rehit: 3,
       damage: 30,
@@ -123,9 +123,9 @@ export const OSA: TankDef = {
 
 export const KOBRA: TankDef = {
   id: 'kobra',
-  name: 'KOBRA',
-  role: 'Niszczyciel czołgów (bez wieży)',
-  desc: 'Nie ma wieży – zamachy wykonuje cały kadłub, obracając się na gąsienicach jak bąk. Niska sylwetka, długa lufa i potężne pchnięcia.',
+  name: 'COBRA',
+  role: 'Turretless tank destroyer',
+  desc: 'No turret – it swings by spinning the whole hull on its tracks like a top. Low profile, long gun and brutal thrusts.',
   damageMult: 1.15,
   walk: 4.4,
   back: 3.4,

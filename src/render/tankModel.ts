@@ -32,8 +32,8 @@ export interface TankStyle {
 
 export const TANK_STYLES: Record<string, TankStyle> = {
   mamut: {
-    base: '#5f6650',
-    patch: '#8a7b55',
+    base: '#7a8364',
+    patch: '#a69466',
     accent: '#b0402a',
     alt: ['#7a6248', '#4e3d2c', '#d9c38a'],
     number: '701',
@@ -42,8 +42,8 @@ export const TANK_STYLES: Record<string, TankStyle> = {
     skirts: true,
   },
   grom: {
-    base: '#66733c',
-    patch: '#46522a',
+    base: '#7f8f4a',
+    patch: '#5a6a38',
     accent: '#e8e2c4',
     alt: ['#5d6b78', '#3e4a55', '#e8c25a'],
     number: '214',
@@ -52,8 +52,8 @@ export const TANK_STYLES: Record<string, TankStyle> = {
     skirts: false,
   },
   osa: {
-    base: '#6f8396',
-    patch: '#4f6070',
+    base: '#8aa0b4',
+    patch: '#64788c',
     accent: '#e3b23c',
     alt: ['#9a7a4c', '#6e5432', '#e8e2c4'],
     number: '07',
@@ -62,8 +62,8 @@ export const TANK_STYLES: Record<string, TankStyle> = {
     skirts: false,
   },
   kobra: {
-    base: '#b39a5e',
-    patch: '#6e4a32',
+    base: '#ccb072',
+    patch: '#8a5c3c',
     accent: '#4c6a3a',
     alt: ['#6a7a8c', '#3e4a58', '#c0c8d0'],
     number: '33',

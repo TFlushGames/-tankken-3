@@ -84,7 +84,7 @@ export class Hud {
       sd.run.style.width = `${(f.run / RUN_MAX) * 100}%`;
       sd.pips.forEach((p, k) => p.classList.toggle('on', f.wins > k));
       if (f.combo >= 2 && s.phase !== PH_INTRO) {
-        sd.combo.textContent = `${f.combo} KOMBO!`;
+        sd.combo.textContent = `${f.combo} HIT COMBO!`;
         sd.combo.classList.add('on');
       } else sd.combo.classList.remove('on');
     }
@@ -93,18 +93,18 @@ export class Hud {
     let banner = '';
     let sub = '';
     if (s.phase === PH_INTRO) {
-      banner = s.phaseFrame < FIGHT_CALL_FRAME ? `RUNDA ${s.round}` : 'WALCZ!';
+      banner = s.phaseFrame < FIGHT_CALL_FRAME ? `ROUND ${s.round}` : 'FIGHT!';
     } else if (s.phase === PH_FIGHT && s.phaseFrame < 30 && !training) {
-      banner = 'WALCZ!';
+      banner = 'FIGHT!';
     } else if (s.phase === PH_KO) {
       const ko = s.fighters.some((f) => f.hp <= 0);
-      banner = ko ? 'K.O.' : 'CZAS!';
+      banner = ko ? 'K.O.' : 'TIME!';
       if (s.phaseFrame > 90) {
-        banner = s.roundWinner >= 0 ? `${TANKS[s.fighters[s.roundWinner]!.tank]!.name} WYGRYWA RUNDĘ` : 'REMIS';
+        banner = s.roundWinner >= 0 ? `${TANKS[s.fighters[s.roundWinner]!.tank]!.name} WINS THE ROUND` : 'DRAW';
       }
     } else if (s.phase === PH_MATCH_END) {
-      banner = `GRACZ ${s.winner + 1} ZWYCIĘŻA`;
-      sub = `${TANKS[s.fighters[s.winner]!.tank]!.name} • Enter / T – rewanż • Esc – menu`;
+      banner = `PLAYER ${s.winner + 1} WINS`;
+      sub = `${TANKS[s.fighters[s.winner]!.tank]!.name} • Enter / T – rematch • Esc – menu`;
     }
     if (banner !== this.lastBanner) {
       this.banner.textContent = banner;

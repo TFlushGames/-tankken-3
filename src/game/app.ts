@@ -10,28 +10,32 @@ import { IN_BLOCK, IN_DOWN, IN_UP } from '../sim/input';
 import { snapshot } from '../sim/snapshot';
 import { createMatch, step } from '../sim/step';
 import type { GameState } from '../sim/types';
+import { PeerRoom, normalizeCode } from '../net/peer';
+import { LossyTransport, NET_VERSION, type NetMsg, type Transport } from '../net/protocol';
+import { RollbackSession } from '../net/rollback';
 import { Hud } from './hud';
 import { ACTIONS, DEFAULT_BINDINGS, Keyboard, keyLabel, saveBindings, type Action } from './input';
 
-type Screen = 'menu' | 'select' | 'fight' | 'settings' | 'help';
+type Screen = 'menu' | 'select' | 'fight' | 'settings' | 'help' | 'online';
 
 const STEP_MS = 1000 / 60;
-const SETTINGS_KEY = 'stalowy-pojedynek.settings.v1';
+const SETTINGS_KEY = 'tankken3.settings.v1';
 
 interface Settings {
   volume: number;
+  music: number;
   quality: Quality;
 }
 
-const DUMMY_MODES = ['stoi', 'blokuje', 'blok w kucki', 'kuca', 'skacze', 'gracz 2'] as const;
+const DUMMY_MODES = ['stand', 'block', 'crouch block', 'crouch', 'jump', 'player 2'] as const;
 
 function loadSettings(): Settings {
-  const def: Settings = { volume: 0.7, quality: { shadows: true, post: true, particles: 1 } };
+  const def: Settings = { volume: 0.7, music: 0.6, quality: { shadows: true, post: true, particles: 1 } };
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw) {
       const p = JSON.parse(raw) as Partial<Settings>;
-      return { volume: p.volume ?? def.volume, quality: { ...def.quality, ...p.quality } };
+      return { volume: p.volume ?? def.volume, music: p.music ?? def.music, quality: { ...def.quality, ...p.quality } };
     }
   } catch {
     /* domyślne */
@@ -76,6 +80,7 @@ export class App {
   private pauseMenu: HTMLElement | null = null;
   private seedCounter = 1;
   private showNet = false;
+  private net: OnlineState | null = null;
 
   constructor(canvas: HTMLCanvasElement, ui: HTMLElement) {
     this.ui = ui;
@@ -83,12 +88,17 @@ export class App {
     this.renderer.setQuality(this.settings.quality);
     this.renderer.setArena(0);
     this.audio.setVolume(this.settings.volume);
+    this.audio.setMusicVolume(this.settings.music);
+    this.audio.playMusic('menu');
     this.hud = new Hud(document.body);
     this.hud.show(false);
     const unlock = (): void => this.audio.unlock();
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
     this.showMenu();
+    // Link z zaproszeniem: ?room=KOD
+    const room = normalizeCode(new URLSearchParams(location.search).get('room') ?? '');
+    if (room) this.joinRoom(room);
     requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -107,6 +117,7 @@ export class App {
     this.ui.replaceChildren();
     if (content) this.ui.append(content);
     this.hud.show(s === 'fight');
+    this.audio.playMusic(s === 'fight' ? 'fight' : 'menu');
     this.renderer.showroom = s !== 'fight';
     this.kb.clearPressed();
   }
@@ -115,19 +126,20 @@ export class App {
     this.state = null;
     this.audio.stopEngines();
     this.removeTrainingPanel();
+    this.leaveOnline();
     const items: [string, () => void, boolean][] = [
-      ['Gra lokalna', () => this.showSelect(false), true],
-      ['Trening', () => this.showSelect(true), true],
-      ['Gra online', () => undefined, false],
-      ['Ustawienia', () => this.showSettings(), true],
-      ['Sterowanie', () => this.showHelp(), true],
+      ['Local versus', () => this.showSelect(false), true],
+      ['Training', () => this.showSelect(true), true],
+      ['Online', () => this.showOnline(), true],
+      ['Settings', () => this.showSettings(), true],
+      ['Controls', () => this.showHelp(), true],
     ];
     const list = h('div', { class: 'menu-list' });
     items.forEach(([label, fn, enabled], i) => {
       const b = h('button', { class: 'menu-item' }, label);
       if (!enabled) {
         b.disabled = true;
-        b.append(h('span', { class: 'soon' }, 'wkrótce'));
+        b.append(h('span', { class: 'soon' }, 'soon'));
       }
       b.addEventListener('click', () => {
         this.audio.unlock();
@@ -141,10 +153,10 @@ export class App {
     });
     const root = h(
       'div', { class: 'screen menu' },
-      h('div', { class: 'logo' }, h('span', { class: 'logo-top' }, 'STALOWY'), h('span', { class: 'logo-bottom' }, 'POJEDYNEK')),
-      h('div', { class: 'tagline' }, 'Bijatyka czołgów 1 na 1'),
+      h('div', { class: 'logo' }, h('span', { class: 'logo-top' }, 'TANKKEN'), h('span', { class: 'logo-bottom' }, '3')),
+      h('div', { class: 'tagline' }, '1-on-1 tank fighting'),
       list,
-      h('div', { class: 'hint' }, 'W/S lub ↑/↓ – wybór • Enter / T – zatwierdź'),
+      h('div', { class: 'hint' }, 'W/S or ↑/↓ – select • Enter / T – confirm'),
     );
     this.setScreen('menu', root);
     this.highlightMenu();
@@ -174,12 +186,12 @@ export class App {
     const t = TANKS[i]!;
     const max = (k: (x: typeof t) => number): number => Math.max(...TANKS.map(k));
     const rows: [string, number][] = [
-      ['Siła', t.damageMult / max((x) => x.damageMult)],
-      ['Szybkość', t.run / max((x) => x.run)],
-      ['Zasięg', t.barrelLength / max((x) => x.barrelLength)],
-      ['Wieża', t.turretMaxVel / max((x) => x.turretMaxVel)],
-      ['Skok', t.jumpHeight / max((x) => x.jumpHeight)],
-      ['Masa', t.mass / max((x) => x.mass)],
+      ['Power', t.damageMult / max((x) => x.damageMult)],
+      ['Speed', t.run / max((x) => x.run)],
+      ['Reach', t.barrelLength / max((x) => x.barrelLength)],
+      ['Turret', t.turretMaxVel / max((x) => x.turretMaxVel)],
+      ['Jump', t.jumpHeight / max((x) => x.jumpHeight)],
+      ['Mass', t.mass / max((x) => x.mass)],
     ];
     return h('div', { class: 'stats' }, ...rows.map(([label, v]) =>
       h('div', { class: 'stat' }, h('span', {}, label), h('div', { class: 'stat-bar' }, h('div', { class: 'stat-fill', style: `width:${Math.round(v * 100)}%` })))));
@@ -201,7 +213,7 @@ export class App {
       const t = TANKS[this.pick[p]!]!;
       const isDummy = this.training && p === 1;
       const col = h('div', { class: `select-col p${p + 1} ${this.ready[p] ? 'ready' : ''}` },
-        h('div', { class: 'select-player' }, isDummy ? 'MANEKIN' : `GRACZ ${p + 1}`),
+        h('div', { class: 'select-player' }, isDummy ? 'DUMMY' : `PLAYER ${p + 1}`),
         h('div', { class: 'select-name' }, t.name),
         h('div', { class: 'select-role' }, t.role),
         this.statBars(this.pick[p]!),
@@ -216,11 +228,11 @@ export class App {
           return b;
         })),
         (() => {
-          const b = h('button', { class: 'ready-btn' }, this.ready[p] ? 'GOTOWY ✓' : 'Gotowy');
+          const b = h('button', { class: 'ready-btn' }, this.ready[p] ? 'READY ✓' : 'Ready');
           b.addEventListener('click', () => this.toggleReady(p as 0 | 1));
           return b;
         })(),
-        h('div', { class: 'hint' }, p === 0 ? 'A/D – wybór • T – gotowy' : isDummy ? 'wybierz myszką lub ←/→' : '←/→ – wybór • Num 7 / Enter – gotowy'),
+        h('div', { class: 'hint' }, p === 0 ? 'A/D – select • T – ready' : isDummy ? 'pick with mouse or ←/→' : '←/→ – select • Num 7 / Enter – ready'),
       );
       return col;
     });
@@ -228,7 +240,7 @@ export class App {
     arenaBtn.addEventListener('click', () => this.cycleArena());
     const back = h('button', { class: 'back-btn' }, '← Menu (Esc)');
     back.addEventListener('click', () => this.showMenu());
-    root.append(h('div', { class: 'select-title' }, this.training ? 'TRENING – WYBÓR CZOŁGU' : 'WYBÓR CZOŁGU'), cols[0]!, cols[1]!,
+    root.append(h('div', { class: 'select-title' }, this.training ? 'TRAINING – SELECT TANK' : 'SELECT YOUR TANK'), cols[0]!, cols[1]!,
       h('div', { class: 'select-bottom' }, back, arenaBtn));
   }
 
@@ -281,25 +293,31 @@ export class App {
       this.audio.setVolume(s.volume);
       this.saveSettings();
     });
+    const mus = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(s.music) });
+    mus.addEventListener('input', () => {
+      s.music = Number(mus.value);
+      this.audio.setMusicVolume(s.music);
+      this.saveSettings();
+    });
     const toggle = (label: string, get: () => boolean, set: (v: boolean) => void): HTMLElement => {
-      const b = h('button', { class: 'toggle' }, `${label}: ${get() ? 'TAK' : 'NIE'}`);
+      const b = h('button', { class: 'toggle' }, `${label}: ${get() ? 'ON' : 'OFF'}`);
       b.addEventListener('click', () => {
         set(!get());
-        b.textContent = `${label}: ${get() ? 'TAK' : 'NIE'}`;
+        b.textContent = `${label}: ${get() ? 'ON' : 'OFF'}`;
         this.renderer.setQuality(s.quality);
         this.saveSettings();
       });
       return b;
     };
-    const partBtn = h('button', { class: 'toggle' }, `Cząsteczki: ${Math.round(s.quality.particles * 100)}%`);
+    const partBtn = h('button', { class: 'toggle' }, `Particles: ${Math.round(s.quality.particles * 100)}%`);
     partBtn.addEventListener('click', () => {
       s.quality.particles = s.quality.particles >= 1 ? 0.25 : s.quality.particles + 0.25;
-      partBtn.textContent = `Cząsteczki: ${Math.round(s.quality.particles * 100)}%`;
+      partBtn.textContent = `Particles: ${Math.round(s.quality.particles * 100)}%`;
       this.renderer.setQuality(s.quality);
       this.saveSettings();
     });
     const table = h('table', { class: 'binds' },
-      h('tr', {}, h('th', {}, 'Akcja'), h('th', {}, 'Gracz 1'), h('th', {}, 'Gracz 2')));
+      h('tr', {}, h('th', {}, 'Action'), h('th', {}, 'Player 1'), h('th', {}, 'Player 2')));
     for (const a of ACTIONS) {
       const row = h('tr', {}, h('td', {}, a.label));
       for (const p of [0, 1] as const) {
@@ -309,7 +327,7 @@ export class App {
       }
       table.append(row);
     }
-    const reset = h('button', { class: 'toggle' }, 'Przywróć domyślne klawisze');
+    const reset = h('button', { class: 'toggle' }, 'Restore default keys');
     reset.addEventListener('click', () => {
       this.kb.bindings = [{ ...DEFAULT_BINDINGS[0] }, { ...DEFAULT_BINDINGS[1] }];
       saveBindings(this.kb.bindings);
@@ -318,19 +336,20 @@ export class App {
     const back = h('button', { class: 'back-btn' }, '← Menu (Esc)');
     back.addEventListener('click', () => this.showMenu());
     const root = h('div', { class: 'screen settings' },
-      h('h2', {}, 'USTAWIENIA'),
+      h('h2', {}, 'SETTINGS'),
       h('div', { class: 'settings-grid' },
         h('div', { class: 'settings-box' },
-          h('h3', {}, 'Dźwięk i grafika'),
-          h('label', { class: 'vol' }, 'Głośność ', vol),
-          toggle('Cienie', () => s.quality.shadows, (v) => (s.quality.shadows = v)),
+          h('h3', {}, 'Sound & graphics'),
+          h('label', { class: 'vol' }, 'Sound effects ', vol),
+          h('label', { class: 'vol' }, 'Music ', mus),
+          toggle('Shadows', () => s.quality.shadows, (v) => (s.quality.shadows = v)),
           toggle('Post-processing (bloom, FXAA)', () => s.quality.post, (v) => (s.quality.post = v)),
           partBtn,
           h('p', { class: 'note' },
-            'Wskazówka: gracz 2 używa klawiatury numerycznej – włącz NumLock. ',
-            'Wiele klawiatur nie rejestruje kilku klawiszy naraz (ghosting) – jeśli jakaś kombinacja nie działa, przypisz klawisze inaczej.'),
+            'Tip: player 2 uses the numeric keypad – turn on NumLock. ',
+            'Many keyboards cannot register several keys at once (ghosting) – if a combination does not work, rebind the keys.'),
         ),
-        h('div', { class: 'settings-box' }, h('h3', {}, 'Klawisze (kliknij, aby zmienić)'), table, reset),
+        h('div', { class: 'settings-box' }, h('h3', {}, 'Keys (click to change)'), table, reset),
       ),
       back,
     );
@@ -338,7 +357,7 @@ export class App {
   }
 
   private rebind(p: 0 | 1, a: Action, b: HTMLButtonElement): void {
-    b.textContent = '…naciśnij klawisz';
+    b.textContent = '…press a key';
     b.classList.add('wait');
     this.kb.capture = (code) => {
       if (code !== 'Escape') {
@@ -352,18 +371,18 @@ export class App {
 
   private showHelp(): void {
     const rows: [string, string, string][] = [
-      ['Ruch / skok / kucanie', 'W A S D', 'Strzałki'],
+      ['Move / jump / crouch', 'W A S D', 'Arrows'],
       ['High punch (HP)', 'T', 'Num 7'],
       ['Low punch (LP)', 'G', 'Num 4'],
-      ['Bieg (RUN) + przód', 'H', 'Num 5'],
+      ['Run (RUN) + forward', 'H', 'Num 5'],
       ['Low kick (LK)', 'J', 'Num 6'],
       ['High kick (HK)', 'U', 'Num 9'],
-      ['Blok', 'Spacja', 'Num 0'],
-      ['Unik w głąb', 'B', 'Num 1'],
-      ['Unik do kamery', 'M', 'Num 3'],
-      ['Doskok', '2× przód / tył', '2× → / ←'],
-      ['Podwójny skok (salto)', 'W w powietrzu', '↑ w powietrzu'],
-      ['Doskok w powietrzu', 'H + kierunek', 'Num 5 + kierunek'],
+      ['Block', 'Space', 'Num 0'],
+      ['Sidestep in', 'B', 'Num 1'],
+      ['Sidestep out', 'M', 'Num 3'],
+      ['Dash', '2× forward / back', '2× → / ←'],
+      ['Double jump (flip)', 'W in the air', '↑ in the air'],
+      ['Air dash', 'H + direction', 'Num 5 + direction'],
     ];
     const label = (id: string, depth = 0): string => {
       const m = MOVES.find((x) => x.id === id)!;
@@ -372,8 +391,8 @@ export class App {
         const link = parent?.chains?.find((c) => c.to === id);
         if (parent && link) return `${label(parent.id, depth + 1)}, ${link.button}`;
       }
-      const seq = m.input.sequence.map((d) => ({ D: 'dół', B: 'tył', F: 'przód', U: 'góra' } as Record<string, string>)[d] ?? d);
-      const st = m.stance.includes('air') && !m.stance.includes('stand') ? 'w skoku + ' : '';
+      const seq = m.input.sequence.map((d) => ({ D: 'down', B: 'back', F: 'forward', U: 'up' } as Record<string, string>)[d] ?? d);
+      const st = m.stance.includes('air') && !m.stance.includes('stand') ? 'in air + ' : '';
       const run = m.input.withRun ? 'RUN + ' : '';
       return st + run + [...seq, m.input.button].join(' + ');
     };
@@ -382,15 +401,15 @@ export class App {
     const back = h('button', { class: 'back-btn' }, '← Menu (Esc)');
     back.addEventListener('click', () => this.showMenu());
     const root = h('div', { class: 'screen help' },
-      h('h2', {}, 'STEROWANIE'),
+      h('h2', {}, 'CONTROLS'),
       h('div', { class: 'settings-grid' },
         h('div', { class: 'settings-box' },
-          h('table', { class: 'binds' }, h('tr', {}, h('th', {}, 'Akcja'), h('th', {}, 'Gracz 1'), h('th', {}, 'Gracz 2')),
+          h('table', { class: 'binds' }, h('tr', {}, h('th', {}, 'Action'), h('th', {}, 'Player 1'), h('th', {}, 'Player 2')),
             ...rows.map(([a, b, c]) => h('tr', {}, h('td', {}, a), h('td', {}, b), h('td', {}, c)))),
-          h('p', { class: 'note' }, 'Kierunki są względne: „przód” = w stronę przeciwnika. Blok wysoki chroni przed high/mid/overhead, blok w kucki przed low/mid. Rzut: blisko + przód + LP; ucieczka: LP zaraz po złapaniu.'),
-          h('p', { class: 'note' }, 'Debug: F1 – hitboxy • F3 – pauza (trening) • F4 – klatka po klatce • F6 – frame data • F7 – tryb manekina • Esc – pauza'),
+          h('p', { class: 'note' }, 'Directions are relative: “forward” = towards the opponent. Standing block stops high/mid/overhead, crouching block stops low/mid. Throw: close + forward + LP; escape: LP right after being grabbed. Mash a button during an attack to chain combos.'),
+          h('p', { class: 'note' }, 'Debug: F1 – hitboxes • F2 – network stats • F3 – pause (training) • F4 – frame step • F6 – frame data • F7 – dummy mode • Esc – pause'),
         ),
-        h('div', { class: 'settings-box' }, h('h3', {}, 'Ruchy'), h('table', { class: 'binds moves' }, ...moves)),
+        h('div', { class: 'settings-box' }, h('h3', {}, 'Moves'), h('table', { class: 'binds moves' }, ...moves)),
       ),
       back,
     );
@@ -413,14 +432,14 @@ export class App {
     const tank = this.state.fighters[0].tank;
     const fd = computeFrameData(tank);
     p.replaceChildren(
-      h('div', { class: 'fd-title' }, `TRENING – ${TANKS[tank]!.name}`),
-      h('div', { class: 'fd-mode' }, `Manekin: ${DUMMY_MODES[this.dummy]} (F7)`),
-      h('div', { class: 'fd-mode' }, this.paused ? '⏸ PAUZA – F4: następna klatka' : 'F3: pauza • F1: hitboxy'),
+      h('div', { class: 'fd-title' }, `TRAINING – ${TANKS[tank]!.name}`),
+      h('div', { class: 'fd-mode' }, `Dummy: ${DUMMY_MODES[this.dummy]} (F7)`),
+      h('div', { class: 'fd-mode' }, this.paused ? '⏸ PAUSED – F4: next frame' : 'F3: pause • F1: hitboxes'),
       ...(this.showFd ? [h('table', { class: 'fd' },
-        h('tr', {}, h('th', {}, 'Ruch'), h('th', {}, 'Start'), h('th', {}, 'Akt.'), h('th', {}, 'Odz.'), h('th', {}, 'Obr.'), h('th', {}, 'Typ')),
+        h('tr', {}, h('th', {}, 'Move'), h('th', {}, 'Start'), h('th', {}, 'Act.'), h('th', {}, 'Rec.'), h('th', {}, 'Dmg'), h('th', {}, 'Type')),
         ...fd.map((d) => h('tr', {}, h('td', {}, d.name), h('td', {}, String(d.startup)), h('td', {}, String(d.active)),
           h('td', {}, String(d.recovery)), h('td', {}, String(d.damage)), h('td', {}, `${d.level}, ${d.kind}`))))] : []),
-      h('div', { class: 'fd-mode' }, 'F6: pokaż/ukryj frame data'),
+      h('div', { class: 'fd-mode' }, 'F6: show/hide frame data'),
     );
   }
 
@@ -431,15 +450,15 @@ export class App {
 
   private dummyInput(frame: number): number {
     switch (DUMMY_MODES[this.dummy]) {
-      case 'blokuje':
+      case 'block':
         return IN_BLOCK;
-      case 'blok w kucki':
+      case 'crouch block':
         return IN_BLOCK | IN_DOWN;
-      case 'kuca':
+      case 'crouch':
         return IN_DOWN;
-      case 'skacze':
+      case 'jump':
         return frame % 70 < 3 ? IN_UP : 0;
-      case 'gracz 2':
+      case 'player 2':
         return this.kb.read(1);
       default:
         return 0;
@@ -454,14 +473,14 @@ export class App {
       this.pauseMenu = null;
       return;
     }
-    const resume = h('button', { class: 'menu-item active' }, 'Wznów (Esc)');
+    const resume = h('button', { class: 'menu-item active' }, 'Resume (Esc)');
     resume.addEventListener('click', () => this.togglePause());
-    const menu = h('button', { class: 'menu-item' }, 'Wyjdź do menu');
+    const menu = h('button', { class: 'menu-item' }, 'Quit to menu');
     menu.addEventListener('click', () => {
       this.togglePause();
       this.showMenu();
     });
-    this.pauseMenu = h('div', { class: 'pause' }, h('h2', {}, 'PAUZA'), resume, menu);
+    this.pauseMenu = h('div', { class: 'pause' }, h('h2', {}, 'PAUSED'), resume, menu);
     this.ui.append(this.pauseMenu);
   }
 
@@ -485,11 +504,25 @@ export class App {
       }
     }
     if (this.state?.phase === PH_MATCH_END) {
-      if (this.kb.consume('Enter') || this.kb.consume('KeyT') || this.kb.consume('Numpad7')) this.startMatch();
+      if (this.kb.consume('Enter') || this.kb.consume('KeyT') || this.kb.consume('Numpad7')) {
+        if (this.net) this.requestRematch();
+        else this.startMatch();
+      }
+      if (this.net && this.kb.consume('Escape')) this.showMenu();
     }
   }
 
   private simStep(): void {
+    if (this.net?.session) {
+      const ses = this.net.session;
+      ses.tick(this.kb.read(0));
+      this.kb.endStep();
+      this.state = ses.state;
+      this.prev = ses.prev;
+      const fresh = this.renderer.handleEvents(ses.events, ses.state);
+      this.audio.handleEvents(fresh);
+      return;
+    }
     const s = this.state!;
     this.prev = snapshot(s);
     const in1 = this.kb.read(0);
@@ -518,9 +551,13 @@ export class App {
       case 'fight':
         this.fightInput();
         break;
+      case 'online':
+        this.onlineInput();
+        break;
     }
+    this.netHeartbeat(now);
     if (this.screen === 'fight' && this.state && this.prev) {
-      const frozen = !!this.pauseMenu || (this.training && this.paused);
+      const frozen = !this.net && (!!this.pauseMenu || (this.training && this.paused));
       if (!frozen) {
         this.acc += dtMs;
         let n = 0;
@@ -540,12 +577,369 @@ export class App {
       this.hud.update(this.state, dt, this.training);
       const dbg: string[] = [];
       if (this.renderer.showDebug) dbg.push(Hud.describe(this.state));
-      if (this.showNet) dbg.push('Sieć: gra lokalna – statystyki pojawią się w trybie online.');
+      if (this.showNet) dbg.push(this.netStatsText());
       this.hud.setDebug(dbg.join('\n'));
       this.audio.updateContinuous(this.state);
     } else {
-      this.renderer.renderShowroom(this.pick[0], this.pick[1], dt);
+      const showP2 = this.screen === 'online' && this.net?.opp ? this.net.opp.tank : this.pick[1];
+      this.renderer.renderShowroom(this.screen === 'online' && this.net ? this.net.myPick : this.pick[0], showP2, dt);
     }
     requestAnimationFrame((t) => this.frame(t));
   }
+
+  // ------------------------------------------------------------ gra online (P2P + rollback)
+
+  private showOnline(message = ''): void {
+    this.leaveOnline();
+    const code = h('input', { class: 'code-input', maxlength: '6', placeholder: 'CODE', autocomplete: 'off', spellcheck: 'false' });
+    const create = h('button', { class: 'menu-item active' }, 'Create room');
+    create.addEventListener('click', () => this.createRoom());
+    const join = h('button', { class: 'menu-item' }, 'Join');
+    const doJoin = (): void => {
+      const c = normalizeCode(code.value);
+      if (c) this.joinRoom(c);
+      else code.classList.add('bad');
+    };
+    join.addEventListener('click', doJoin);
+    code.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') doJoin();
+    });
+    const back = h('button', { class: 'back-btn' }, '← Menu (Esc)');
+    back.addEventListener('click', () => this.showMenu());
+    const root = h('div', { class: 'screen online' },
+      h('h2', {}, 'ONLINE'),
+      h('div', { class: 'online-box' },
+        create,
+        h('div', { class: 'online-or' }, 'or enter a code from a friend'),
+        h('div', { class: 'online-join' }, code, join),
+        message ? h('div', { class: 'online-msg' }, message) : '',
+        h('p', { class: 'note' }, 'The connection is direct (peer-to-peer). You always use the player 1 keys. To simulate a bad connection add ?lag=120&jitter=30&loss=5 to the address.'),
+      ),
+      back,
+    );
+    this.setScreen('online', root);
+    code.focus();
+  }
+
+  private onlineStatus(title: string, detail: string, extra?: HTMLElement): void {
+    const back = h('button', { class: 'back-btn' }, '← Cancel (Esc)');
+    back.addEventListener('click', () => this.showMenu());
+    const root = h('div', { class: 'screen online' },
+      h('h2', {}, title), h('div', { class: 'online-box' }, h('div', { class: 'online-msg' }, detail), extra ?? ''), back);
+    this.setScreen('online', root);
+  }
+
+  private newNet(room: PeerRoom | null): OnlineState {
+    return {
+      room, transport: null, session: null, myPick: this.pick[0], myReady: false, opp: null, arena: this.arena,
+      match: 0, rematchMe: false, rematchOpp: false, lastPing: 0, ping: 0, lostAt: 0, retryAt: 0, inFight: false,
+    };
+  }
+
+  private createRoom(): void {
+    this.onlineStatus('CREATING ROOM', 'Connecting to the matchmaking server…');
+    const net = this.newNet(null);
+    this.net = net;
+    void PeerRoom.host({
+      onRoomReady: (code) => {
+        if (this.net !== net) return;
+        // Link zachowuje ewentualne parametry własnego serwera / symulacji łącza.
+        const params = new URLSearchParams(location.search);
+        params.set('room', code);
+        const link = `${location.origin}${location.pathname}?${params.toString()}`;
+        const copy = h('button', { class: 'menu-item active' }, 'Copy link');
+        copy.addEventListener('click', () => {
+          void navigator.clipboard?.writeText(link).then(() => (copy.textContent = 'Copied ✓'));
+        });
+        this.onlineStatus('ROOM READY', 'Send the link or the code to a friend and wait for them to join.',
+          h('div', {}, h('div', { class: 'room-code' }, code), h('div', { class: 'room-link' }, link), copy));
+      },
+      onConnected: (t) => this.netConnected(net, t),
+      onError: (msg) => {
+        if (this.net === net) this.showOnline(msg);
+      },
+    }).then((room) => {
+      if (this.net === net) net.room = room;
+      else room.destroy();
+    });
+  }
+
+  private joinRoom(code: string): void {
+    this.onlineStatus('JOINING', `Connecting to room ${code}…`);
+    const net = this.newNet(null);
+    this.net = net;
+    void PeerRoom.join(code, {
+      onConnected: (t) => this.netConnected(net, t),
+      onError: (msg) => {
+        if (this.net !== net) return;
+        if (net.inFight || net.lostAt) return;
+        this.showOnline(msg);
+      },
+    }).then((room) => {
+      if (this.net === net) net.room = room;
+      else room.destroy();
+    });
+  }
+
+  private netConnected(net: OnlineState, raw: Transport): void {
+    if (this.net !== net) return;
+    const p = new URLSearchParams(location.search);
+    const lag = Number(p.get('lag') ?? 0);
+    const jitter = Number(p.get('jitter') ?? 0);
+    const loss = Number(p.get('loss') ?? 0);
+    const t = lag || jitter || loss ? new LossyTransport(raw, lag, jitter, loss) : raw;
+    net.transport = t;
+    net.lostAt = 0;
+    t.onMessage = (m) => this.onNetMessage(net, m);
+    t.onClose = () => this.onNetLost(net);
+    t.send({ t: 'hello', ver: NET_VERSION });
+    if (net.session) {
+      // Powrót po zerwaniu – walka trwa dalej, brakujące wejścia dojdą.
+      net.session.setTransport(t);
+      this.hud.setDebug('');
+      return;
+    }
+    this.sendPick();
+    this.showLobby();
+  }
+
+  private onNetLost(net: OnlineState): void {
+    if (this.net !== net || net.lostAt) return;
+    net.lostAt = performance.now();
+    net.retryAt = net.lostAt + 1500;
+    net.transport = null;
+  }
+
+  private sendPick(): void {
+    const n = this.net;
+    n?.transport?.send({ t: 'pick', tank: n.myPick, ready: n.myReady, arena: n.arena });
+  }
+
+  private isHost(): boolean {
+    return this.net?.room?.isHost ?? false;
+  }
+
+  private showLobby(): void {
+    const n = this.net;
+    if (!n) return;
+    const me = this.isHost() ? 0 : 1;
+    const col = (who: 'me' | 'opp'): HTMLElement => {
+      const tank = who === 'me' ? n.myPick : n.opp?.tank ?? -1;
+      const ready = who === 'me' ? n.myReady : n.opp?.ready ?? false;
+      const t = tank >= 0 ? TANKS[tank]! : null;
+      const cls = (who === 'me') === (me === 0) ? 'p1' : 'p2';
+      const c = h('div', { class: `select-col ${cls} ${ready ? 'ready' : ''}` },
+        h('div', { class: 'select-player' }, who === 'me' ? 'YOU' : 'OPPONENT'),
+        h('div', { class: 'select-name' }, t ? t.name : '…'),
+        h('div', { class: 'select-role' }, t ? t.role : 'choosing a tank'),
+        ...(t ? [this.statBars(tank), h('div', { class: 'select-desc' }, t.desc)] : []));
+      if (who === 'me') {
+        c.append(h('div', { class: 'select-cards' }, ...TANKS.map((x, i) => {
+          const b = h('button', { class: `card ${i === n.myPick ? 'on' : ''}` }, x.name);
+          b.addEventListener('click', () => this.lobbyPick(i));
+          return b;
+        })));
+        const rb = h('button', { class: 'ready-btn' }, n.myReady ? 'READY ✓' : 'Ready');
+        rb.addEventListener('click', () => this.lobbyReady());
+        c.append(rb, h('div', { class: 'hint' }, 'A/D – select • T – ready'));
+      } else {
+        c.append(h('div', { class: 'hint' }, ready ? 'Ready!' : 'Waiting…'));
+      }
+      return c;
+    };
+    const arenaBtn = h('button', { class: 'arena-btn' }, `Arena: ${ARENAS[n.arena]!.name}${this.isHost() ? ' (Tab)' : ''}`);
+    if (this.isHost()) arenaBtn.addEventListener('click', () => this.lobbyArena());
+    const back = h('button', { class: 'back-btn' }, '← Leave (Esc)');
+    back.addEventListener('click', () => this.showMenu());
+    const cols = me === 0 ? [col('me'), col('opp')] : [col('opp'), col('me')];
+    const root = h('div', { class: 'screen select' },
+      h('div', { class: 'select-title' }, `ONLINE – ROOM ${n.room?.code ?? ''}${n.ping ? ` • ${n.ping} ms` : ''}`),
+      cols[0]!, cols[1]!, h('div', { class: 'select-bottom' }, back, arenaBtn));
+    this.setScreen('online', root);
+  }
+
+  private lobbyPick(i: number): void {
+    const n = this.net;
+    if (!n || n.myReady) return;
+    n.myPick = (i + TANKS.length) % TANKS.length;
+    this.sendPick();
+    this.showLobby();
+  }
+
+  private lobbyReady(): void {
+    const n = this.net;
+    if (!n) return;
+    n.myReady = !n.myReady;
+    this.sendPick();
+    this.showLobby();
+    this.maybeStartOnline();
+  }
+
+  private lobbyArena(): void {
+    const n = this.net;
+    if (!n || !this.isHost()) return;
+    n.arena = (n.arena + 1) % ARENAS.length;
+    this.renderer.setArena(n.arena);
+    this.sendPick();
+    this.showLobby();
+  }
+
+  private maybeStartOnline(): void {
+    const n = this.net;
+    if (!n || !this.isHost() || !n.myReady || !n.opp?.ready || n.inFight) return;
+    const seed = (Math.random() * 0x7fffffff) | 0;
+    const msg: NetMsg = { t: 'start', seed, tanks: [n.myPick, n.opp.tank], arena: n.arena, match: n.match + 1 };
+    n.transport?.send(msg);
+    this.startOnline(msg);
+  }
+
+  private startOnline(msg: Extract<NetMsg, { t: 'start' }>): void {
+    const n = this.net;
+    if (!n || !n.transport) return;
+    n.match = msg.match;
+    n.inFight = true;
+    n.rematchMe = false;
+    n.rematchOpp = false;
+    n.arena = msg.arena;
+    const tanks: [number, number] = [msg.tanks[0] % TANKS.length, msg.tanks[1] % TANKS.length];
+    this.training = false;
+    this.renderer.setArena(n.arena);
+    const state = createMatch(tanks[0], tanks[1], msg.seed);
+    n.session = new RollbackSession(n.transport, state, this.isHost() ? 0 : 1, msg.match);
+    this.state = state;
+    this.prev = snapshot(state);
+    this.acc = 0;
+    this.renderer.setTanks(tanks[0], tanks[1]);
+    this.audio.startEngines(tanks);
+    this.setScreen('fight', null);
+  }
+
+  private requestRematch(): void {
+    const n = this.net;
+    if (!n || n.rematchMe) return;
+    n.rematchMe = true;
+    n.transport?.send({ t: 'rematch' });
+    this.hud.setDebug('Waiting for the opponent to accept the rematch…');
+    this.checkRematch();
+  }
+
+  private checkRematch(): void {
+    const n = this.net;
+    if (!n || !n.rematchMe || !n.rematchOpp || !this.isHost() || !n.opp) return;
+    const seed = (Math.random() * 0x7fffffff) | 0;
+    const tanks: [number, number] = [n.session?.state.fighters[0].tank ?? n.myPick, n.session?.state.fighters[1].tank ?? n.opp.tank];
+    const msg: NetMsg = { t: 'start', seed, tanks, arena: n.arena, match: n.match + 1 };
+    n.transport?.send(msg);
+    this.startOnline(msg);
+  }
+
+  private onNetMessage(net: OnlineState, m: NetMsg): void {
+    if (this.net !== net) return;
+    if (net.session?.handle(m)) return;
+    switch (m.t) {
+      case 'ping':
+        net.transport?.send({ t: 'pong', ts: m.ts });
+        break;
+      case 'pong': {
+        const rtt = Math.max(0, Math.round(performance.now()) - m.ts);
+        net.ping = net.ping ? Math.round(net.ping * 0.8 + rtt * 0.2) : rtt;
+        net.session?.setPing(rtt);
+        break;
+      }
+      case 'hello':
+        if (m.ver !== NET_VERSION) this.showOnline('Your opponent runs a different game version – refresh the page (Ctrl+F5).');
+        break;
+      case 'pick':
+        net.opp = { tank: m.tank % TANKS.length, ready: m.ready };
+        if (!this.isHost() && m.arena !== net.arena) {
+          net.arena = m.arena % ARENAS.length;
+          this.renderer.setArena(net.arena);
+        }
+        if (!net.inFight) this.showLobby();
+        this.maybeStartOnline();
+        break;
+      case 'start':
+        if (!this.isHost()) this.startOnline(m);
+        break;
+      case 'rematch':
+        net.rematchOpp = true;
+        this.checkRematch();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Ping co sekundę, a po zerwaniu – próby ponownego połączenia przez 10 s. */
+  private netHeartbeat(now: number): void {
+    const n = this.net;
+    if (!n) return;
+    if (n.transport && now - n.lastPing > 1000) {
+      n.lastPing = now;
+      n.transport.send({ t: 'ping', ts: Math.round(now) });
+    }
+    if (n.lostAt) {
+      const left = Math.ceil((10000 - (now - n.lostAt)) / 1000);
+      if (left <= 0) {
+        this.showMenu();
+        window.alert('The opponent disconnected.');
+        return;
+      }
+      const text = `Connection lost – trying to reconnect (${left} s)…`;
+      if (this.screen === 'fight') this.hud.setDebug(text);
+      if (!this.isHost() && now > n.retryAt) {
+        n.retryAt = now + 2000;
+        n.room?.connect();
+      }
+    }
+  }
+
+  private onlineInput(): void {
+    const n = this.net;
+    if (this.kb.consume('Escape')) return this.showMenu();
+    if (!n?.transport || n.inFight) return;
+    if (this.kb.consume('KeyA')) this.lobbyPick(n.myPick - 1);
+    if (this.kb.consume('KeyD')) this.lobbyPick(n.myPick + 1);
+    if (this.kb.consume(this.kb.bindings[0].HP)) this.lobbyReady();
+    if (this.kb.consume('Tab')) this.lobbyArena();
+  }
+
+  private netStatsText(): string {
+    const st = this.net?.session?.stats;
+    if (!st) return 'Network: local game.';
+    return `Network: ping ${st.ping} ms • input delay ${st.delay} f • last rollback ${st.lastRollback} f (total ${st.rollbacks}) • frame advantage ${st.advantage} • stalls ${st.stalls} • desyncs ${st.desyncs}${st.desyncs ? ` (frame ${st.lastDesyncFrame})` : ''}`;
+  }
+
+  private leaveOnline(): void {
+    const n = this.net;
+    if (!n) return;
+    this.net = null;
+    n.transport?.close();
+    n.room?.destroy();
+    const params = new URLSearchParams(location.search);
+    if (params.has('room')) {
+      params.delete('room');
+      const q = params.toString();
+      history.replaceState(null, '', location.pathname + (q ? `?${q}` : ''));
+    }
+  }
+}
+
+interface OnlineState {
+  room: PeerRoom | null;
+  transport: Transport | null;
+  session: RollbackSession | null;
+  myPick: number;
+  myReady: boolean;
+  opp: { tank: number; ready: boolean } | null;
+  arena: number;
+  match: number;
+  rematchMe: boolean;
+  rematchOpp: boolean;
+  lastPing: number;
+  ping: number;
+  lostAt: number;
+  retryAt: number;
+  inFight: boolean;
 }

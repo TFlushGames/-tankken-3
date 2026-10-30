@@ -6,18 +6,18 @@ import {
 export type Action = 'up' | 'down' | 'left' | 'right' | 'HP' | 'LP' | 'RUN' | 'LK' | 'HK' | 'BLOCK' | 'SSIN' | 'SSOUT';
 
 export const ACTIONS: { id: Action; label: string; bit: number }[] = [
-  { id: 'up', label: 'Skok (góra)', bit: IN_UP },
-  { id: 'down', label: 'Kucanie (dół)', bit: IN_DOWN },
-  { id: 'left', label: 'Lewo', bit: IN_LEFT },
-  { id: 'right', label: 'Prawo', bit: IN_RIGHT },
+  { id: 'up', label: 'Jump (up)', bit: IN_UP },
+  { id: 'down', label: 'Crouch (down)', bit: IN_DOWN },
+  { id: 'left', label: 'Left', bit: IN_LEFT },
+  { id: 'right', label: 'Right', bit: IN_RIGHT },
   { id: 'HP', label: 'High punch (HP)', bit: IN_HP },
   { id: 'LP', label: 'Low punch (LP)', bit: IN_LP },
-  { id: 'RUN', label: 'Bieg (RUN)', bit: IN_RUN },
+  { id: 'RUN', label: 'Run (RUN)', bit: IN_RUN },
   { id: 'LK', label: 'Low kick (LK)', bit: IN_LK },
   { id: 'HK', label: 'High kick (HK)', bit: IN_HK },
-  { id: 'BLOCK', label: 'Blok', bit: IN_BLOCK },
-  { id: 'SSIN', label: 'Unik w głąb', bit: IN_SS_IN },
-  { id: 'SSOUT', label: 'Unik do kamery', bit: IN_SS_OUT },
+  { id: 'BLOCK', label: 'Block', bit: IN_BLOCK },
+  { id: 'SSIN', label: 'Sidestep in', bit: IN_SS_IN },
+  { id: 'SSOUT', label: 'Sidestep out', bit: IN_SS_OUT },
 ];
 
 export type Bindings = Record<Action, string>;
@@ -34,7 +34,7 @@ export const DEFAULT_BINDINGS: [Bindings, Bindings] = [
   },
 ];
 
-const STORAGE_KEY = 'stalowy-pojedynek.bindings.v1';
+const STORAGE_KEY = 'tankken3.bindings.v1';
 
 export function loadBindings(): [Bindings, Bindings] {
   try {
@@ -66,7 +66,7 @@ export function keyLabel(code: string): string {
   if (code.startsWith('Digit')) return code.slice(5);
   if (code.startsWith('Numpad')) return 'Num ' + code.slice(6);
   const map: Record<string, string> = {
-    Space: 'Spacja', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', ShiftLeft: 'L-Shift',
+    Space: 'Space', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', ShiftLeft: 'L-Shift',
     ShiftRight: 'P-Shift', ControlLeft: 'L-Ctrl', ControlRight: 'P-Ctrl', Enter: 'Enter', Backspace: 'Backspace',
   };
   return map[code] ?? code;
