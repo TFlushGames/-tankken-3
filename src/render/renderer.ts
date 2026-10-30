@@ -21,6 +21,7 @@ import { ARENAS, Arena } from './arena';
 import { CameraShake, ComicText, DebrisSystem, ImpactFX, ParticleSystem, PuffSystem, SwingTrail, Tracers } from './effects';
 import { occlusion, toonMat } from './toon';
 import { FinisherDirector, type Cue } from './cinematic';
+import { MenuAmbience } from './menuScene';
 import { TankModel } from './tankModel';
 
 export interface Quality {
@@ -174,8 +175,14 @@ export class GameRenderer {
     this.dustColor.set(def.dust);
   }
 
+  /** Przełącza arenę tylko wtedy, gdy to inna niż obecna. */
+  ensureArena(index: number): void {
+    if (index % ARENAS.length !== this.arenaIndex) this.setArena(index);
+  }
+
   /** Tworzy modele dla meczu. Lustrzany pojedynek → wariant kolorystyczny gracza 2. */
   setTanks(t1: number, t2: number): void {
+    this.clearShowcase();
     for (const v of this.views) {
       this.scene.remove(v.model.root);
       this.scene.remove(v.trail.mesh);
@@ -795,45 +802,228 @@ export class GameRenderer {
   }
 
   /** Pokaz modeli na ekranie wyboru: czołgi obracają się na „podestach”. */
-  renderShowroom(t1: number, t2: number, dt: number): void {
-    this.time += dt;
+  // ------------------------------------------------------------ menu i wybór czołgu (poza walką)
+
+  private ambience: MenuAmbience | null = null;
+  /** Modele ekranu wyboru (osobne od walki), z czasem „wjazdu” każdego z nich. */
+  private show: (TankModel | null)[] = [null, null];
+  private showAt = [0, 0];
+  private showLanded = [true, true];
+  private portraits = new Map<number, string>();
+
+  private hideFightViews(): void {
+    for (const v of this.views) {
+      v.model.root.visible = false;
+      v.trail.mesh.visible = false;
+    }
+  }
+
+  /** Model do sceny menu/wyboru; nowy czołg „spada” na scenę z obłoczkiem kurzu. */
+  private showModel(slot: number, tank: number, drop: boolean): TankModel {
+    const cur = this.show[slot];
+    if (cur && cur.def === TANKS[tank]) return cur;
+    if (cur) this.scene.remove(cur.root);
+    const other = this.show[1 - slot];
+    const m = new TankModel(TANKS[tank]!, slot === 1 && other?.def === TANKS[tank]);
+    this.scene.add(m.root);
+    this.show[slot] = m;
+    this.showAt[slot] = drop ? this.time : -10;
+    this.showLanded[slot] = !drop;
+    return m;
+  }
+
+  /** Sprząta scenę menu (przy wejściu do walki). */
+  clearShowcase(): void {
+    for (const m of this.show) if (m) this.scene.remove(m.root);
+    this.show = [null, null];
+    if (this.ambience) {
+      this.ambience.dispose();
+      this.ambience = null;
+    }
+    this.restoreFog();
+  }
+
+  private savedFog: [number, number, THREE.Color] | null = null;
+  private moodFog(): void {
+    const f = this.scene.fog as THREE.Fog | null;
+    if (!f || this.savedFog) return;
+    this.savedFog = [f.near, f.far, f.color.clone()];
+    f.near = 30;
+    f.far = 230;
+    f.color.lerp(new THREE.Color('#c99a74'), 0.35);
+  }
+
+  private restoreFog(): void {
+    const f = this.scene.fog as THREE.Fog | null;
+    if (f && this.savedFog) {
+      [f.near, f.far] = this.savedFog;
+      f.color.copy(this.savedFog[2]);
+    }
+    this.savedFog = null;
+  }
+
+  private offFightCamera(): void {
     if (this.camera.near !== 0.1 || this.camera.fov !== 35) {
       this.camera.near = 0.1;
       this.camera.fov = 35;
       this.camera.updateProjectionMatrix();
     }
-    if (!this.views.length || this.views[0]!.model.def !== TANKS[t1] || this.views[1]!.model.def !== TANKS[t2]) {
-      this.setTanks(t1, t2);
+    this.shake.update(0);
+  }
+
+  private sunAt(x: number, z: number): void {
+    if (!this.arena) return;
+    this.arena.sun.target.position.set(x, 0, z);
+    const [sx, sy, sz] = this.arena.def.sunDir;
+    this.arena.sun.position.set(x + sx * 40, sy * 40, z + sz * 40);
+  }
+
+  /**
+   * Menu główne: jeden czołg w prawym dolnym rogu (złoty podział), kamera nisko w trawie,
+   * w tle pagórki, pola i odległe słupy dymu.
+   */
+  renderMenu(tank: number, dt: number): void {
+    this.time += dt;
+    this.offFightCamera();
+    this.hideFightViews();
+    if (this.show[1]) {
+      this.scene.remove(this.show[1].root);
+      this.show[1] = null;
     }
-    const spin = this.time * 0.5;
-    for (let i = 0; i < 2; i++) {
-      const v = this.views[i]!;
-      const m = v.model;
-      m.root.position.set(i === 0 ? -2.7 : 2.7, 0, i === 0 ? 0.6 : -0.6);
-      m.root.rotation.y = spin * (i === 0 ? 1 : -1) + (i === 0 ? 0.6 : Math.PI - 0.6);
-      m.turret.rotation.y = Math.sin(this.time * 0.9 + i) * 0.5;
-      m.mantlet.rotation.z = (Math.sin(this.time * 1.3 + i) * 0.5 + 0.5) * 0.25;
-      m.body.position.y = 0;
-      m.body.rotation.set(0, 0, 0);
-      m.updateTracks(0.01, 0.01, this.time, 0.3);
+    if (!this.ambience) {
+      this.ambience = new MenuAmbience();
+      this.scene.add(this.ambience.group);
     }
+    this.moodFog();
+    this.ambience.update(this.time, dt);
+    const m = this.showModel(0, tank, false);
+    const t = this.time;
+    m.root.position.set(0, 0, 0);
+    m.root.rotation.set(0, 2.45, 0);
+    m.spin.rotation.set(0, 0, 0);
+    m.body.rotation.set(0, 0, Math.sin(t * 9) * 0.004);
+    m.body.position.y = Math.sin(t * 13) * 0.006;
+    // Wieża powoli rozgląda się po horyzoncie, lufa lekko opuszczona.
+    m.turret.rotation.y = -0.55 + Math.sin(t * 0.13) * 0.28;
+    m.mantlet.rotation.z = -0.03 + Math.sin(t * 0.21) * 0.025;
+    m.barrel.position.x = 0;
+    m.updateTracks(0, 0, t, 0.15);
+    this.smoke.update(dt);
+    this.puffs.update(dt);
+    this.arena?.update(t, [new THREE.Vector3(0, 0, m.def.hullLength / 2 + 0.6), new THREE.Vector3(-99, -99, 0.01)]);
+    // Kamera nisko, kadr przesunięty tak, by czołg stał w prawym dolnym punkcie złotego podziału.
+    const r = m.def.hullLength;
+    const desired = new THREE.Vector3(-1.4, 0.8, 8 + r * 1.35);
+    const look = new THREE.Vector3(-1.6 - r * 0.55, 2.0, -3);
+    this.camPos.lerp(desired.add(new THREE.Vector3(Math.sin(t * 0.17) * 0.25, Math.sin(t * 0.23) * 0.06, 0)), Math.min(1, dt * 2));
+    this.camLook.lerp(look, Math.min(1, dt * 2));
+    this.camera.position.copy(this.camPos);
+    this.camera.lookAt(this.camLook);
+    this.fill.position.set(-6, 6, 14);
+    this.fill.target.position.set(0, 1, 0);
+    this.sunAt(0, 0);
+    this.draw();
+  }
+
+  /** Wybór czołgu: gracz 1 po lewej, gracz 2 po prawej, ustawieni do siebie w ¾. */
+  renderSelect(t1: number, t2: number, dt: number, ready: [boolean, boolean]): void {
+    this.time += dt;
+    this.offFightCamera();
+    this.hideFightViews();
+    if (this.ambience) this.ambience.update(this.time, dt);
+    this.restoreFog();
+    const t = this.time;
+    [t1, t2].forEach((tank, i) => {
+      const m = this.showModel(i, tank, true);
+      const side = i === 0 ? -1 : 1;
+      const x = side * (3.6 + m.def.hullLength * 0.25);
+      // Wjazd: spadek z góry, twarde lądowanie z kurzem, sprężyste ugięcie.
+      const since = t - this.showAt[i]!;
+      const fall = Math.min(1, since / 0.32);
+      const y = (1 - fall * fall) * 7;
+      if (!this.showLanded[i] && fall >= 1) {
+        this.showLanded[i] = true;
+        this.puffs.ring(new THREE.Vector3(x, 0.2, 0), 12, m.def.hullLength * 0.45, 5, 0.9, this.dustColor);
+        this.shake.add(0.35);
+      }
+      const squash = fall >= 1 ? Math.exp(-(since - 0.32) * 7) * Math.sin((since - 0.32) * 26) * 0.12 : 0;
+      m.root.position.set(x, y, 0);
+      m.root.rotation.set(0, side < 0 ? -0.62 : Math.PI + 0.62, 0);
+      m.spin.rotation.set(0, 0, 0);
+      m.spin.scale.set(1 + squash * 0.5, 1 - squash, 1 + squash * 0.5);
+      const rdy = ready[i]!;
+      // Gotowy: lufa w górę i „pompa” kadłubem; inaczej spokojne rozglądanie.
+      m.turret.rotation.y = rdy ? Math.sin(t * 7) * 0.12 : Math.sin(t * 0.7 + i * 2) * 0.35;
+      m.mantlet.rotation.z = rdy ? 0.35 : 0.04 + Math.sin(t * 1.1 + i) * 0.04;
+      m.body.position.y = rdy ? Math.abs(Math.sin(t * 7)) * 0.06 : Math.sin(t * 12 + i) * 0.006;
+      m.body.rotation.set(0, 0, rdy ? -0.05 : 0);
+      m.barrel.position.x = 0;
+      m.updateTracks(0, 0, t, 0.25);
+    });
     this.smoke.update(dt);
     this.sparks.update(dt);
     this.puffs.update(dt);
-    this.arena?.update(this.time, [new THREE.Vector3(-3.4, 0, 3.2), new THREE.Vector3(3.4, 0, 3.2)]);
-    this.fill.position.set(0, 10, 18);
-    this.fill.target.position.set(0, 1, 0);
-    // Kamera patrzy nad czołgi, by stały w dolnej części ekranu – pod panelami wyboru.
-    const desired = new THREE.Vector3(0, 3.0, 14);
-    this.camPos.lerp(desired, Math.min(1, dt * 3));
-    this.camLook.lerp(new THREE.Vector3(0, 3.3, 0), Math.min(1, dt * 3));
-    this.camera.position.copy(this.camPos);
+    this.arena?.update(t, this.show.map((m) => new THREE.Vector3(m!.root.position.x, 0, m!.def.hullLength / 2 + 0.6)));
+    // Czołgi w środkowym pasie ekranu – nad tabliczkami z nazwami, po bokach kafelków.
+    this.camPos.lerp(new THREE.Vector3(0, 2.7, 15.5), Math.min(1, dt * 3));
+    this.camLook.lerp(new THREE.Vector3(0, -0.2, 0), Math.min(1, dt * 3));
+    this.camera.position.copy(this.camPos).add(this.shake.offset);
     this.camera.lookAt(this.camLook);
-    if (this.arena) {
-      this.arena.sun.target.position.set(0, 0, 0);
-      const [sx, sy, sz] = this.arena.def.sunDir;
-      this.arena.sun.position.set(sx * 40, sy * 40, sz * 40);
-    }
+    this.shake.update(dt);
+    this.fill.position.set(0, 8, 16);
+    this.fill.target.position.set(0, 1, 0);
+    this.sunAt(0, 0);
     this.draw();
   }
+
+  /** Portret czołgu do kafelka wyboru (render poza ekranem, przezroczyste tło). */
+  portrait(tank: number): string {
+    const cached = this.portraits.get(tank);
+    if (cached) return cached;
+    const size = 256;
+    const rt = new THREE.WebGLRenderTarget(size, size, { samples: 4 });
+    rt.texture.colorSpace = THREE.SRGBColorSpace;
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xfff0dd, 0x4a3a2a, 1.6));
+    const key = new THREE.DirectionalLight(0xffd6a8, 3.2);
+    key.position.set(4, 6, 5);
+    const rim = new THREE.DirectionalLight(0x9fc4ff, 2.2);
+    rim.position.set(-6, 3, -4);
+    scene.add(key, rim);
+    const m = new TankModel(TANKS[tank]!, false);
+    m.root.rotation.y = -0.75;
+    m.mantlet.rotation.z = 0.12;
+    m.turret.rotation.y = 0.25;
+    scene.add(m.root);
+    const box = new THREE.Box3().setFromObject(m.root);
+    const c = box.getCenter(new THREE.Vector3());
+    const cam = new THREE.PerspectiveCamera(26, 1, 0.1, 100);
+    const r = box.getSize(new THREE.Vector3()).length() * 0.5;
+    cam.position.set(c.x + r * 1.1, c.y + r * 0.9, c.z + r * 1.9);
+    cam.lookAt(c.x + r * 0.08, c.y - r * 0.05, c.z);
+    const prevClear = this.renderer.getClearAlpha();
+    const prevColor = this.renderer.getClearColor(new THREE.Color());
+    const prevTone = this.renderer.toneMapping;
+    this.renderer.setRenderTarget(rt);
+    this.renderer.setClearColor(0x000000, 0);
+    this.renderer.clear();
+    this.renderer.render(scene, cam);
+    const px = new Uint8Array(size * size * 4);
+    this.renderer.readRenderTargetPixels(rt, 0, 0, size, size, px);
+    this.renderer.setRenderTarget(null);
+    this.renderer.setClearColor(prevColor, prevClear);
+    this.renderer.toneMapping = prevTone;
+    rt.dispose();
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(size, size);
+    for (let y = 0; y < size; y++) img.data.set(px.subarray((size - 1 - y) * size * 4, (size - y) * size * 4), y * size * 4);
+    ctx.putImageData(img, 0, 0);
+    const url = canvas.toDataURL('image/png');
+    this.portraits.set(tank, url);
+    return url;
+  }
+
 }

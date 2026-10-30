@@ -139,6 +139,8 @@ export class App {
 
   private showMenu(): void {
     this.state = null;
+    // Menu zawsze na złotej łące – pagórki, pola, dym na horyzoncie.
+    this.renderer.ensureArena(0);
     this.audio.stopEngines();
     this.removeTrainingPanel();
     this.leaveOnline();
@@ -216,57 +218,96 @@ export class App {
     this.training = training;
     this.ready = [false, false];
     const root = h('div', { class: 'screen select' });
+    this.renderer.ensureArena(this.arena);
     this.setScreen('select', root);
     this.renderSelect();
   }
 
+  /**
+   * Wspólny układ ekranu wyboru (lokalnie i online), w stylu klasycznych bijatyk:
+   * kafelki z portretami pośrodku na dole, wybrane czołgi po lewej i prawej stronie.
+   */
+  private selectLayout(o: {
+    title: string;
+    sides: { label: string; tank: number; ready: boolean; hint: string; onReady?: () => void }[];
+    onTile: (i: number, button: number) => void;
+    left: HTMLElement;
+    right: HTMLElement;
+  }): HTMLElement {
+    const plate = (p: number): HTMLElement => {
+      const sd = o.sides[p]!;
+      const t = sd.tank >= 0 ? TANKS[sd.tank]! : null;
+      return h('div', { class: `sel-plate p${p + 1} ${sd.ready ? 'ready' : ''}` },
+        h('div', { class: 'sel-player' }, sd.label, sd.ready ? h('span', { class: 'sel-ready' }, 'READY') : ''),
+        h('div', { class: 'sel-name' }, t ? t.name : '…'),
+        h('div', { class: 'sel-role' }, t ? t.role : 'choosing a tank'),
+        t ? this.statBars(sd.tank) : '',
+        sd.onReady ? (() => {
+          const b = h('button', { class: 'ready-btn' }, sd.ready ? 'READY ✓' : 'Ready');
+          b.addEventListener('click', sd.onReady);
+          return b;
+        })() : '',
+        h('div', { class: 'hint' }, sd.hint));
+    };
+    const roster = h('div', { class: 'roster' }, ...TANKS.map((x, i) => {
+      const on = o.sides.map((sd, p) => (sd.tank === i ? `c${p + 1}` : '')).join(' ');
+      const tile = h('button', { class: `tile ${on}` },
+        h('img', { src: this.renderer.portrait(i), alt: x.name, draggable: 'false' }),
+        h('span', { class: 'tile-name' }, x.name),
+        h('span', { class: 'tile-tag t1' }, 'P1'),
+        h('span', { class: 'tile-tag t2' }, 'P2'));
+      tile.addEventListener('click', () => o.onTile(i, 0));
+      tile.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        o.onTile(i, 2);
+      });
+      return tile;
+    }));
+    return h('div', { class: 'screen select2' },
+      h('div', { class: 'sel-title' }, o.title),
+      plate(0), plate(1),
+      h('div', { class: 'sel-center' }, roster, h('div', { class: 'sel-desc' }, TANKS[Math.max(0, o.sides[0]!.tank)]!.desc)),
+      h('div', { class: 'sel-bottom' }, o.left, o.right));
+  }
+
   private renderSelect(): void {
-    const root = this.ui.querySelector('.select');
-    if (!root) return;
-    root.replaceChildren();
-    const cols = [0, 1].map((p) => {
-      const t = TANKS[this.pick[p]!]!;
-      const isDummy = this.training && p === 1;
-      const col = h('div', { class: `select-col p${p + 1} ${this.ready[p] ? 'ready' : ''}` },
-        h('div', { class: 'select-player' }, isDummy ? 'DUMMY' : `PLAYER ${p + 1}`),
-        h('div', { class: 'select-name' }, t.name),
-        h('div', { class: 'select-role' }, t.role),
-        this.statBars(this.pick[p]!),
-        h('div', { class: 'select-desc' }, t.desc),
-        h('div', { class: 'select-cards' }, ...TANKS.map((x, i) => {
-          const b = h('button', { class: `card ${i === this.pick[p] ? 'on' : ''}` }, x.name);
-          b.addEventListener('click', () => {
-            this.pick[p] = i;
-            this.ready[p] = false;
-            this.renderSelect();
-          });
-          return b;
-        })),
-        (() => {
-          const b = h('button', { class: 'ready-btn' }, this.ready[p] ? 'READY ✓' : 'Ready');
-          b.addEventListener('click', () => this.toggleReady(p as 0 | 1));
-          return b;
-        })(),
-        h('div', { class: 'hint' }, p === 0 ? 'A/D – select • T – ready' : isDummy ? 'pick with mouse or ←/→' : '←/→ – select • Num 7 / Enter – ready'),
-      );
-      return col;
-    });
     const arenaBtn = h('button', { class: 'arena-btn' }, `Arena: ${ARENAS[this.arena]!.name} (Tab)`);
     arenaBtn.addEventListener('click', () => this.cycleArena());
     const back = h('button', { class: 'back-btn' }, '← Menu (Esc)');
     back.addEventListener('click', () => this.showMenu());
-    root.append(h('div', { class: 'select-title' }, this.training ? 'TRAINING – SELECT TANK' : 'SELECT YOUR TANK'), cols[0]!, cols[1]!,
-      h('div', { class: 'select-bottom' }, back, arenaBtn));
+    const root = this.selectLayout({
+      title: this.training ? 'TRAINING – SELECT TANK' : 'SELECT YOUR TANK',
+      sides: [0, 1].map((p) => ({
+        label: this.training && p === 1 ? 'DUMMY' : `PLAYER ${p + 1}`,
+        tank: this.pick[p]!,
+        ready: this.ready[p]!,
+        hint: p === 0 ? 'A/D – select • T – ready' : this.training ? 'right-click a tile' : '←/→ – select • Num 7 / Enter – ready',
+        onReady: this.training && p === 1 ? undefined : () => this.toggleReady(p as 0 | 1),
+      })),
+      onTile: (i, button) => {
+        const p = button === 2 || this.ready[0] ? 1 : 0;
+        if (this.ready[p] && !(this.training && p === 1)) return;
+        // Drugie kliknięcie w wybrany kafelek = gotowy.
+        if (this.pick[p] === i && button !== 2) return this.toggleReady(p as 0 | 1);
+        this.pick[p] = i;
+        this.audio.whoosh(300);
+        this.renderSelect();
+      },
+      left: back,
+      right: arenaBtn,
+    });
+    this.ui.replaceChildren(root);
   }
 
   private cycleArena(): void {
     this.arena = (this.arena + 1) % ARENAS.length;
-    this.renderer.setArena(this.arena);
+    this.renderer.ensureArena(this.arena);
     this.renderSelect();
   }
 
   private toggleReady(p: 0 | 1): void {
     this.ready[p] = !this.ready[p];
+    if (this.ready[p]) this.audio.clang(0.8, 0.4);
     if (this.training) this.ready[1] = true;
     this.renderSelect();
     if (this.ready[0] && this.ready[1]) this.startMatch();
@@ -278,6 +319,7 @@ export class App {
     const change = (p: 0 | 1, d: number): void => {
       if (this.ready[p]) return;
       this.pick[p] = (this.pick[p] + d + TANKS.length) % TANKS.length;
+      this.audio.whoosh(300);
       this.renderSelect();
     };
     if (this.kb.consume('KeyA')) change(0, -1);
@@ -641,8 +683,15 @@ export class App {
       this.hud.setDebug(dbg.join('\n'));
       this.audio.updateContinuous(this.state);
     } else {
-      const showP2 = this.screen === 'online' && this.net?.opp ? this.net.opp.tank : this.pick[1];
-      this.renderer.renderShowroom(this.screen === 'online' && this.net ? this.net.myPick : this.pick[0], showP2, dt);
+      const lobby = this.screen === 'online' && !!this.net?.opp;
+      if (this.screen === 'select') this.renderer.renderSelect(this.pick[0], this.pick[1], dt, this.ready);
+      else if (lobby) {
+        const n = this.net!;
+        const me = this.isHost() ? 0 : 1;
+        const picks: [number, number] = me === 0 ? [n.myPick, n.opp!.tank] : [n.opp!.tank, n.myPick];
+        const ready: [boolean, boolean] = me === 0 ? [n.myReady, n.opp!.ready] : [n.opp!.ready, n.myReady];
+        this.renderer.renderSelect(Math.max(0, picks[0]), Math.max(0, picks[1]), dt, ready);
+      } else this.renderer.renderMenu(this.pick[0], dt);
     }
     requestAnimationFrame((t) => this.frame(t));
   }
@@ -784,38 +833,20 @@ export class App {
     const n = this.net;
     if (!n) return;
     const me = this.isHost() ? 0 : 1;
-    const col = (who: 'me' | 'opp'): HTMLElement => {
-      const tank = who === 'me' ? n.myPick : n.opp?.tank ?? -1;
-      const ready = who === 'me' ? n.myReady : n.opp?.ready ?? false;
-      const t = tank >= 0 ? TANKS[tank]! : null;
-      const cls = (who === 'me') === (me === 0) ? 'p1' : 'p2';
-      const c = h('div', { class: `select-col ${cls} ${ready ? 'ready' : ''}` },
-        h('div', { class: 'select-player' }, who === 'me' ? 'YOU' : 'OPPONENT'),
-        h('div', { class: 'select-name' }, t ? t.name : '…'),
-        h('div', { class: 'select-role' }, t ? t.role : 'choosing a tank'),
-        ...(t ? [this.statBars(tank), h('div', { class: 'select-desc' }, t.desc)] : []));
-      if (who === 'me') {
-        c.append(h('div', { class: 'select-cards' }, ...TANKS.map((x, i) => {
-          const b = h('button', { class: `card ${i === n.myPick ? 'on' : ''}` }, x.name);
-          b.addEventListener('click', () => this.lobbyPick(i));
-          return b;
-        })));
-        const rb = h('button', { class: 'ready-btn' }, n.myReady ? 'READY ✓' : 'Ready');
-        rb.addEventListener('click', () => this.lobbyReady());
-        c.append(rb, h('div', { class: 'hint' }, 'A/D – select • T – ready'));
-      } else {
-        c.append(h('div', { class: 'hint' }, ready ? 'Ready!' : 'Waiting…'));
-      }
-      return c;
-    };
     const arenaBtn = h('button', { class: 'arena-btn' }, `Arena: ${ARENAS[n.arena]!.name}${this.isHost() ? ' (Tab)' : ''}`);
     if (this.isHost()) arenaBtn.addEventListener('click', () => this.lobbyArena());
     const back = h('button', { class: 'back-btn' }, '← Leave (Esc)');
     back.addEventListener('click', () => this.showMenu());
-    const cols = me === 0 ? [col('me'), col('opp')] : [col('opp'), col('me')];
-    const root = h('div', { class: 'screen select' },
-      h('div', { class: 'select-title' }, `ONLINE – ROOM ${n.room?.code ?? ''}${n.ping ? ` • ${n.ping} ms` : ''}`),
-      cols[0]!, cols[1]!, h('div', { class: 'select-bottom' }, back, arenaBtn));
+    const mine = { label: 'YOU', tank: n.myPick, ready: n.myReady, hint: 'A/D – select • T – ready', onReady: () => this.lobbyReady() };
+    const theirs = { label: 'OPPONENT', tank: n.opp?.tank ?? -1, ready: n.opp?.ready ?? false, hint: n.opp?.ready ? 'Ready!' : 'Waiting…' };
+    this.renderer.ensureArena(n.arena);
+    const root = this.selectLayout({
+      title: `ONLINE – ROOM ${n.room?.code ?? ''}${n.ping ? ` • ${n.ping} ms` : ''}`,
+      sides: me === 0 ? [mine, theirs] : [theirs, mine],
+      onTile: (i) => (i === n.myPick ? this.lobbyReady() : this.lobbyPick(i)),
+      left: back,
+      right: arenaBtn,
+    });
     this.setScreen('online', root);
   }
 
